@@ -54,7 +54,7 @@ const state = {
   },
   pump: {
     state: 'OFF',
-    mode: 'auto'
+    automationMode: 'NONE'   // 'NONE' | 'MOISTURE' | 'TIMER'
   },
   timers: [],
   auditLog: [],
@@ -298,6 +298,7 @@ function connectDeviceWebSocket(deviceId) {
   activeWebSocket.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+
       if (data.type === 'telemetry') {
         state.telemetry.soilMoisture = data.soil_moisture || 0;
         state.telemetry.temperature = data.temperature || 0;
@@ -317,6 +318,30 @@ function connectDeviceWebSocket(deviceId) {
 
         updateTelemetryUI();
         renderCanvasChart();
+
+      } else if (data.type === 'pump_update') {
+        // Backend Decision Engine changed the pump state
+        state.pump.state = data.pump_state || 'OFF';
+        if (data.automation_mode) {
+          state.pump.automationMode = data.automation_mode;
+          updateAutomationModeUI(data.automation_mode);
+        }
+        evaluatePumpDecisionEngine();
+        const trigger = data.trigger || 'Auto';
+        showToast(`Pump ${state.pump.state === 'RUNNING' ? 'ON' : 'OFF'} — ${trigger}`, state.pump.state === 'RUNNING' ? 'success' : 'info');
+
+      } else if (data.type === 'mode_update') {
+        // Backend confirmed an automation mode change
+        if (data.automation_mode) {
+          state.pump.automationMode = data.automation_mode;
+          updateAutomationModeUI(data.automation_mode);
+        }
+        if (data.start_threshold) {
+          state.telemetry.targetThreshold = data.start_threshold;
+          state.telemetry.stopThreshold = data.stop_threshold || 85;
+          state.telemetry.maxRuntime = data.max_runtime_mins || 20;
+          updateTelemetryUI();
+        }
       }
     } catch (e) {
       console.error("WS message error", e);
@@ -514,31 +539,33 @@ function promptUnbindDevice(index) {
 
 async function handleControlPumpToggle(checked) {
   state.pump.state = checked ? 'RUNNING' : 'OFF';
-  state.pump.mode = 'manual';
   evaluatePumpDecisionEngine();
 
   const currentDev = state.devices[state.activeDeviceIndex];
+  const cmdStr = checked ? 'PUMP_ON' : 'PUMP_OFF';
+
   if (currentDev) {
-    const cmdStr = checked ? 'PUMP_ON' : 'PUMP_OFF';
     try {
+      // POST /api/command — backend will also set automation_mode to NONE
       await fetch(`${BACKEND_BASE}/api/command`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id: currentDev.id,
-          command: cmdStr
-        })
+        body: JSON.stringify({ device_id: currentDev.id, command: cmdStr })
       });
-      showToast(`Command sent: ${cmdStr} for ${currentDev.id}`, 'success');
+      showToast(`Manual command sent: ${cmdStr}`, 'success');
     } catch (err) {
       showToast('Failed to send command to backend', 'error');
     }
   }
 
+  // Manual switch always clears automation mode locally
+  state.pump.automationMode = 'NONE';
+  updateAutomationModeUI('NONE');
+
   const newLog = {
     time: new Date().toLocaleString(),
     unit: currentDev ? currentDev.name : 'Relay Pump 1',
-    trigger: 'Manual Switch',
+    trigger: 'Manual Override',
     action: checked ? 'OFF → RUNNING' : 'RUNNING → OFF',
     moisture: `${Math.round(state.telemetry.soilMoisture)}%`,
     duration: checked ? 'Active' : 'Manual Stop'
@@ -609,23 +636,79 @@ function evaluatePumpDecisionEngine() {
   }
 }
 
-function handleControlPumpToggle(checked) {
-  state.pump.state = checked ? 'RUNNING' : 'OFF';
-  state.pump.mode = 'manual';
-  evaluatePumpDecisionEngine();
+// ── Automation Mode Functions ─────────────────────────────────────────────
+async function setAutomationMode(mode) {
+  const currentDev = state.devices[state.activeDeviceIndex];
+  if (!currentDev) {
+    showToast('No device connected. Bind a node first.', 'error');
+    return;
+  }
 
-  const newLog = {
-    time: new Date().toLocaleString(),
-    unit: 'Relay Pump 1',
-    trigger: 'Manual Switch',
-    action: checked ? 'OFF → RUNNING' : 'RUNNING → OFF',
-    moisture: `${Math.round(state.telemetry.soilMoisture)}%`,
-    duration: checked ? 'Active' : 'Manual Stop'
-  };
-  state.auditLog.unshift(newLog);
-  renderAuditLog();
+  state.pump.automationMode = mode;
+  updateAutomationModeUI(mode);
 
-  showToast(checked ? 'Relay Water Pump switched ON' : 'Relay Water Pump switched OFF', checked ? 'success' : 'info');
+  try {
+    await fetch(`${BACKEND_BASE}/api/automation/mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_id: currentDev.id,
+        mode: mode,
+        start_threshold: state.telemetry.targetThreshold,
+        stop_threshold: state.telemetry.stopThreshold,
+        max_runtime_mins: state.telemetry.maxRuntime
+      })
+    });
+
+    const modeLabels = { NONE: 'Manual Only', MOISTURE: 'Soil Moisture Auto', TIMER: 'Timer Schedule' };
+    showToast(`Automation mode set: ${modeLabels[mode] || mode}`, 'success');
+
+    // Add to audit log
+    const newLog = {
+      time: new Date().toLocaleString(),
+      unit: currentDev.name,
+      trigger: 'Mode Change',
+      action: `Mode → ${modeLabels[mode] || mode}`,
+      moisture: `${Math.round(state.telemetry.soilMoisture)}%`,
+      duration: '--'
+    };
+    state.auditLog.unshift(newLog);
+    renderAuditLog();
+  } catch (err) {
+    showToast('Failed to update automation mode', 'error');
+  }
+}
+
+function updateAutomationModeUI(mode) {
+  // Update radio button selections
+  document.querySelectorAll('input[name="automationMode"]').forEach(radio => {
+    radio.checked = (radio.value === mode);
+  });
+
+  // Update card highlight
+  const optionMap = { NONE: 'modeOptionNone', MOISTURE: 'modeOptionMoisture', TIMER: 'modeOptionTimer' };
+  Object.values(optionMap).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('active');
+  });
+  const activeId = optionMap[mode];
+  if (activeId) {
+    const activeEl = document.getElementById(activeId);
+    if (activeEl) activeEl.classList.add('active');
+  }
+
+  // Update status badge
+  const badge = document.getElementById('automationModeBadge');
+  if (badge) {
+    const badgeMap = {
+      NONE:     { text: 'MANUAL ONLY',    cls: 'off' },
+      MOISTURE: { text: 'MOISTURE AUTO',  cls: 'running' },
+      TIMER:    { text: 'TIMER ACTIVE',   cls: 'running' }
+    };
+    const b = badgeMap[mode] || badgeMap.NONE;
+    badge.textContent = b.text;
+    badge.className = `status-badge-flat ${b.cls}`;
+  }
 }
 
 function handleForceStop() {

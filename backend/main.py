@@ -8,6 +8,7 @@ One server handles:
   - Website/App live data via WebSocket (/ws/{device_id})
   - Device binding/unbinding
   - Timer management
+  - Pump Automation Engine (Manual / Moisture / Timer modes)
 """
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header
@@ -16,6 +17,8 @@ from pydantic import BaseModel
 from typing import Optional, List
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
 import os
 import json
 import asyncio
@@ -27,8 +30,208 @@ SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# IN-MEMORY DEVICE STATE (per-device pump automation state)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tracks automation_mode, thresholds, and last pump state for each device.
+# This avoids needing a new Supabase column for now.
+#
+# automation_mode:
+#   "NONE"     → Manual only. Backend does nothing automatically.
+#   "MOISTURE" → Auto-pump based on soil moisture thresholds.
+#   "TIMER"    → Auto-pump based on scheduled timers.
+#
+device_state: dict[str, dict] = {}
+# Example entry:
+# "AGS-0001": {
+#     "automation_mode": "NONE",
+#     "start_threshold": 70,
+#     "stop_threshold": 85,
+#     "max_runtime_mins": 20,
+#     "pump_on": False,
+#     "pump_on_since": None,        # datetime when pump was turned ON
+#     "last_soil_moisture": 0,
+#     "last_rain_detected": False,
+# }
+
+def get_device_state(device_id: str) -> dict:
+    """Get or create default state for a device."""
+    if device_id not in device_state:
+        device_state[device_id] = {
+            "automation_mode": "NONE",
+            "start_threshold": 70,
+            "stop_threshold": 85,
+            "max_runtime_mins": 20,
+            "pump_on": False,
+            "pump_on_since": None,
+            "last_soil_moisture": 0,
+            "last_rain_detected": False,
+        }
+    return device_state[device_id]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PUMP DECISION ENGINE (Background Task)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def pump_decision_engine():
+    """
+    Runs every 10 seconds in the background.
+    Evaluates each device's automation_mode and issues pump commands.
+
+    LOGIC:
+      - NONE (Manual): Do nothing. User controls pump directly.
+      - MOISTURE: If soil < start_threshold AND no rain → PUMP_ON.
+                  If soil >= stop_threshold → PUMP_OFF.
+                  If max runtime exceeded → PUMP_OFF.
+      - TIMER: Check current time against scheduled timers.
+               If inside a timer window → PUMP_ON.
+               If outside all windows → PUMP_OFF.
+
+    In ALL modes, the manual switch can always override (handled by
+    the /api/command endpoint, which sets mode to NONE on manual use).
+    """
+    while True:
+        try:
+            await asyncio.sleep(10)
+
+            for device_id, ds in list(device_state.items()):
+                mode = ds.get("automation_mode", "NONE")
+
+                if mode == "NONE":
+                    # Manual mode — do nothing
+                    continue
+
+                elif mode == "MOISTURE":
+                    await evaluate_moisture_mode(device_id, ds)
+
+                elif mode == "TIMER":
+                    await evaluate_timer_mode(device_id, ds)
+
+        except Exception as e:
+            print(f"[Decision Engine] Error: {e}")
+
+
+async def evaluate_moisture_mode(device_id: str, ds: dict):
+    """Auto-pump based on soil moisture thresholds."""
+    soil = ds.get("last_soil_moisture", 0)
+    rain = ds.get("last_rain_detected", False)
+    pump_on = ds.get("pump_on", False)
+    start = ds.get("start_threshold", 70)
+    stop = ds.get("stop_threshold", 85)
+    max_runtime = ds.get("max_runtime_mins", 20)
+
+    # Safety: max runtime check
+    if pump_on and ds.get("pump_on_since"):
+        elapsed = (datetime.now() - ds["pump_on_since"]).total_seconds() / 60
+        if elapsed >= max_runtime:
+            await queue_pump_command(device_id, "PUMP_OFF", "Max Runtime Safety Cutoff")
+            ds["pump_on"] = False
+            ds["pump_on_since"] = None
+            return
+
+    # If soil is dry AND no rain → turn pump ON
+    if soil < start and not rain and not pump_on:
+        await queue_pump_command(device_id, "PUMP_ON", "Smart Moisture Auto")
+        ds["pump_on"] = True
+        ds["pump_on_since"] = datetime.now()
+
+    # If soil has reached the stop threshold → turn pump OFF
+    elif soil >= stop and pump_on:
+        await queue_pump_command(device_id, "PUMP_OFF", "Smart Moisture Auto")
+        ds["pump_on"] = False
+        ds["pump_on_since"] = None
+
+
+async def evaluate_timer_mode(device_id: str, ds: dict):
+    """Auto-pump based on scheduled timers from the timers table."""
+    pump_on = ds.get("pump_on", False)
+
+    try:
+        timers_resp = supabase.table("timers") \
+            .select("*") \
+            .eq("device_id", device_id) \
+            .eq("is_active", True) \
+            .execute()
+
+        timers = timers_resp.data if timers_resp.data else []
+    except Exception:
+        return
+
+    now = datetime.now()
+    day_names = ["M", "T", "W", "T", "F", "S", "S"]
+    current_day = day_names[now.weekday()]
+    inside_window = False
+
+    for timer in timers:
+        active_days = timer.get("active_days", [])
+        if current_day not in active_days:
+            continue
+
+        try:
+            start_str = timer.get("start_time", "06:00")
+            # Handle both "06:00" and "06:00 PM" formats
+            if "AM" in start_str.upper() or "PM" in start_str.upper():
+                start_time = datetime.strptime(start_str.upper().strip(), "%I:%M %p").time()
+            else:
+                start_time = datetime.strptime(start_str.strip(), "%H:%M").time()
+
+            duration_mins = timer.get("duration_mins", 15)
+            start_dt = now.replace(hour=start_time.hour, minute=start_time.minute, second=0, microsecond=0)
+            end_dt = start_dt + timedelta(minutes=duration_mins)
+
+            if start_dt <= now <= end_dt:
+                inside_window = True
+                break
+        except Exception:
+            continue
+
+    if inside_window and not pump_on:
+        await queue_pump_command(device_id, "PUMP_ON", "Timer Schedule")
+        ds["pump_on"] = True
+        ds["pump_on_since"] = datetime.now()
+    elif not inside_window and pump_on:
+        await queue_pump_command(device_id, "PUMP_OFF", "Timer Schedule")
+        ds["pump_on"] = False
+        ds["pump_on_since"] = None
+
+
+async def queue_pump_command(device_id: str, command: str, trigger: str):
+    """Insert a command into the device_commands table for the ESP32 to pick up."""
+    print(f"[Decision Engine] {device_id}: {command} (trigger: {trigger})")
+    try:
+        supabase.table("device_commands").insert({
+            "device_id": device_id,
+            "command": command,
+            "executed": False
+        }).execute()
+
+        # Broadcast pump state change to connected dashboards
+        pump_running = command == "PUMP_ON"
+        await manager.broadcast(device_id, {
+            "type": "pump_update",
+            "pump_state": "RUNNING" if pump_running else "OFF",
+            "trigger": trigger,
+            "automation_mode": device_state.get(device_id, {}).get("automation_mode", "NONE"),
+        })
+    except Exception as e:
+        print(f"[Decision Engine] Error queuing command: {e}")
+
+
+# ── App Lifespan (start background tasks) ───────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start the Decision Engine background task
+    task = asyncio.create_task(pump_decision_engine())
+    print("[Startup] Pump Decision Engine started.")
+    yield
+    task.cancel()
+    print("[Shutdown] Pump Decision Engine stopped.")
+
+
 # ── FastAPI App ──────────────────────────────────────────────────────────────
-app = FastAPI(title="AgriSense AI Backend", version="1.0.0")
+app = FastAPI(title="AgriSense AI Backend", version="2.0.0", lifespan=lifespan)
 
 # Allow Website and App to connect (CORS)
 app.add_middleware(
@@ -91,7 +294,7 @@ class TelemetryPayload(BaseModel):
 class CommandPayload(BaseModel):
     """What the website/app sends to control the pump"""
     device_id: str
-    command: str   # "PUMP_ON", "PUMP_OFF", "VALVE1_ON", "VALVE1_OFF", etc.
+    command: str   # "PUMP_ON", "PUMP_OFF"
 
 class BindDevicePayload(BaseModel):
     """What the website sends when adding a new ESP32"""
@@ -108,6 +311,14 @@ class TimerPayload(BaseModel):
     active_days: List[str]
     user_token: str
 
+class AutomationModePayload(BaseModel):
+    """Set the pump automation mode for a device"""
+    device_id: str
+    mode: str              # "NONE", "MOISTURE", "TIMER"
+    start_threshold: Optional[int] = 70
+    stop_threshold: Optional[int] = 85
+    max_runtime_mins: Optional[int] = 20
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ROUTES
@@ -115,7 +326,7 @@ class TimerPayload(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "AgriSense Backend is running", "version": "1.0.0"}
+    return {"status": "AgriSense Backend is running", "version": "2.0.0"}
 
 
 # ── ESP32: Send sensor data ──────────────────────────────────────────────────
@@ -125,7 +336,8 @@ async def receive_telemetry(payload: TelemetryPayload):
     The ESP32 calls this every 10 seconds.
     1. We verify the device exists in Supabase.
     2. We save the reading to telemetry_data table.
-    3. We instantly broadcast the reading to all connected website/app clients.
+    3. We update the in-memory device state (for Decision Engine).
+    4. We instantly broadcast the reading to all connected website/app clients.
     """
     # Step 1: Verify device exists
     device_check = supabase.table("devices").select("device_id").eq("device_id", payload.device_id).execute()
@@ -146,7 +358,12 @@ async def receive_telemetry(payload: TelemetryPayload):
     }
     supabase.table("telemetry_data").insert(reading).execute()
 
-    # Step 3: Broadcast live to website/app via WebSocket
+    # Step 3: Update in-memory state for Decision Engine
+    ds = get_device_state(payload.device_id)
+    ds["last_soil_moisture"] = payload.soil_moisture
+    ds["last_rain_detected"] = payload.rain_detected
+
+    # Step 4: Broadcast live to website/app via WebSocket
     await manager.broadcast(payload.device_id, {
         "type": "telemetry",
         **reading
@@ -184,20 +401,90 @@ def get_command(device_id: str):
     return {"command": cmd["command"]}
 
 
-# ── Website/App: Send a pump command ─────────────────────────────────────────
+# ── Website/App: Send a manual pump command ──────────────────────────────────
 @app.post("/api/command")
-def send_command(payload: CommandPayload):
+async def send_command(payload: CommandPayload):
     """
-    Website or App sends: 'Turn pump ON for device AGS-7F3K21'
-    We save it to the database. ESP32 will pick it up in ≤5 seconds.
+    Website or App sends: 'Turn pump ON/OFF for device AGS-7F3K21'
+    This is a MANUAL override — it immediately:
+      1. Queues the command for the ESP32.
+      2. Switches automation_mode to NONE so the Decision Engine
+         doesn't fight the manual action.
     """
+    # Queue command
     supabase.table("device_commands").insert({
         "device_id": payload.device_id,
         "command": payload.command,
         "executed": False
     }).execute()
 
-    return {"status": "command queued", "command": payload.command}
+    # Switch to manual mode (disable any running automation)
+    ds = get_device_state(payload.device_id)
+    ds["automation_mode"] = "NONE"
+    ds["pump_on"] = (payload.command == "PUMP_ON")
+    if payload.command == "PUMP_ON":
+        ds["pump_on_since"] = datetime.now()
+    else:
+        ds["pump_on_since"] = None
+
+    # Broadcast mode change to dashboard
+    await manager.broadcast(payload.device_id, {
+        "type": "pump_update",
+        "pump_state": "RUNNING" if payload.command == "PUMP_ON" else "OFF",
+        "trigger": "Manual Override",
+        "automation_mode": "NONE",
+    })
+
+    return {"status": "command queued", "command": payload.command, "automation_mode": "NONE"}
+
+
+# ── Website/App: Set automation mode ─────────────────────────────────────────
+@app.post("/api/automation/mode")
+async def set_automation_mode(payload: AutomationModePayload):
+    """
+    Set the pump automation mode for a device.
+    Modes: "NONE" (manual only), "MOISTURE", "TIMER"
+    """
+    if payload.mode not in ("NONE", "MOISTURE", "TIMER"):
+        raise HTTPException(status_code=400, detail="Invalid mode. Use NONE, MOISTURE, or TIMER.")
+
+    ds = get_device_state(payload.device_id)
+    ds["automation_mode"] = payload.mode
+    ds["start_threshold"] = payload.start_threshold or 70
+    ds["stop_threshold"] = payload.stop_threshold or 85
+    ds["max_runtime_mins"] = payload.max_runtime_mins or 20
+
+    print(f"[Automation] {payload.device_id}: mode set to {payload.mode}")
+
+    # Broadcast mode change
+    await manager.broadcast(payload.device_id, {
+        "type": "mode_update",
+        "automation_mode": payload.mode,
+        "start_threshold": ds["start_threshold"],
+        "stop_threshold": ds["stop_threshold"],
+        "max_runtime_mins": ds["max_runtime_mins"],
+    })
+
+    return {
+        "status": "mode updated",
+        "device_id": payload.device_id,
+        "automation_mode": payload.mode,
+    }
+
+
+# ── Website/App: Get current automation state for a device ───────────────────
+@app.get("/api/automation/state/{device_id}")
+def get_automation_state(device_id: str):
+    """Return the current automation mode and pump state."""
+    ds = get_device_state(device_id)
+    return {
+        "device_id": device_id,
+        "automation_mode": ds["automation_mode"],
+        "pump_on": ds["pump_on"],
+        "start_threshold": ds["start_threshold"],
+        "stop_threshold": ds["stop_threshold"],
+        "max_runtime_mins": ds["max_runtime_mins"],
+    }
 
 
 # ── Website/App: Bind a new ESP32 device ─────────────────────────────────────
@@ -327,10 +614,25 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
     """
     Website/App connects here to receive live sensor data instantly.
     When the ESP32 sends a reading, it shows up here within milliseconds.
+    Also receives pump_update and mode_update events from the Decision Engine.
     
     Usage: ws://your-server:8000/ws/AGS-7F3K21
     """
     await manager.connect(device_id, websocket)
+
+    # Send current automation state on connect
+    ds = get_device_state(device_id)
+    try:
+        await websocket.send_json({
+            "type": "mode_update",
+            "automation_mode": ds["automation_mode"],
+            "start_threshold": ds["start_threshold"],
+            "stop_threshold": ds["stop_threshold"],
+            "max_runtime_mins": ds["max_runtime_mins"],
+        })
+    except:
+        pass
+
     try:
         while True:
             # Keep connection alive

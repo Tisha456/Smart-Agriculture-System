@@ -527,12 +527,74 @@
             </div>
           </div>
 
+          <!-- Automation Mode Selector -->
+          <div class="clean-card">
+            <h3 class="card-title">
+              <span class="material-symbols-outlined" style="color: var(--green-primary);">smart_toy</span>
+              Pump Automation Mode
+            </h3>
+            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 1rem;">
+              Choose ONE automation mode below. The manual ON/OFF switch above always works regardless of mode.
+              Using the manual switch automatically pauses any active automation.
+            </p>
+
+            <div style="display: flex; flex-direction: column; gap: 0.6rem;" id="automationModeGroup">
+              <!-- Manual Only -->
+              <label class="automation-mode-option active" id="modeOptionNone" onclick="setAutomationMode('NONE')">
+                <div style="display: flex; align-items: center; gap: 0.65rem;">
+                  <input type="radio" name="automationMode" value="NONE" checked style="accent-color: var(--green-primary);">
+                  <div>
+                    <span style="font-size: 13px; font-weight: 600; display: block;">Manual Only</span>
+                    <span style="font-size: 11px; color: var(--text-muted);">No automation. You control the pump entirely with the switch above.</span>
+                  </div>
+                </div>
+              </label>
+
+              <!-- Moisture Auto -->
+              <label class="automation-mode-option" id="modeOptionMoisture" onclick="setAutomationMode('MOISTURE')">
+                <div style="display: flex; align-items: center; gap: 0.65rem;">
+                  <input type="radio" name="automationMode" value="MOISTURE" style="accent-color: var(--green-primary);">
+                  <div>
+                    <span style="font-size: 13px; font-weight: 600; display: block;">
+                      <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: text-bottom; color: var(--green-primary);">water_drop</span>
+                      Soil Moisture Auto
+                    </span>
+                    <span style="font-size: 11px; color: var(--text-muted);">Pump turns ON/OFF automatically based on the moisture thresholds configured below.</span>
+                  </div>
+                </div>
+              </label>
+
+              <!-- Timer Schedule -->
+              <label class="automation-mode-option" id="modeOptionTimer" onclick="setAutomationMode('TIMER')">
+                <div style="display: flex; align-items: center; gap: 0.65rem;">
+                  <input type="radio" name="automationMode" value="TIMER" style="accent-color: var(--green-primary);">
+                  <div>
+                    <span style="font-size: 13px; font-weight: 600; display: block;">
+                      <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: text-bottom; color: var(--amber-warning);">schedule</span>
+                      Timer Schedule
+                    </span>
+                    <span style="font-size: 11px; color: var(--text-muted);">Pump runs only during the scheduled times configured in the Timer panel on the right.</span>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Active Mode Status Badge -->
+            <div style="margin-top: 0.85rem; padding: 0.5rem 0.75rem; background: var(--bg-main); border: 1px solid var(--border-color); border-radius: var(--radius-md); display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);">ACTIVE MODE:</span>
+              <span class="status-badge-flat off" id="automationModeBadge" style="font-size: 10px;">MANUAL ONLY</span>
+            </div>
+          </div>
+
           <!-- Smart Threshold Configurator -->
           <div class="clean-card">
             <h3 class="card-title">
               <span class="material-symbols-outlined" style="color: var(--green-primary);">tune</span>
               Automated Decision Thresholds
             </h3>
+            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 0.75rem;">
+              These thresholds are used when <strong>Soil Moisture Auto</strong> mode is active above.
+            </p>
 
             <div style="margin-bottom: 1.25rem;">
               <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 0.35rem;">

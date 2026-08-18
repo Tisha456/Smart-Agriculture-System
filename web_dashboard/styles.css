@@ -1043,3 +1043,25 @@ input[type=range]::-webkit-slider-runnable-track {
   margin-bottom: 1rem;
 }
 
+/* Automation Mode Selector */
+.automation-mode-option {
+  display: block;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: var(--bg-main);
+}
+
+.automation-mode-option:hover {
+  border-color: var(--green-primary);
+  background: rgba(62, 207, 142, 0.04);
+}
+
+.automation-mode-option.active {
+  border-color: var(--green-primary);
+  background: rgba(62, 207, 142, 0.08);
+  box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.2);
+}
+
