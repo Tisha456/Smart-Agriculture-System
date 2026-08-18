@@ -1,89 +1,211 @@
-/**
- * AgriSense AI — Smart Agriculture Web Application Engine
- * Includes Split Analytics: 4-Point Rolling Canvas Graph + Numerical Interval Breakdown
- */
+// ── Supabase & Backend Configuration ─────────────────────────────────────
+const SUPABASE_URL = "https://iqmrpwvbmfkhychhditg.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxbXJwd3ZibWZraHljaGhkaXRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyNTY5OTEsImV4cCI6MjEwMTgzMjk5MX0.i8wCUSDmc6DI8ZLK6wQeaZDzQqZCEIzkZUrrg2RnefQ";
+const BACKEND_BASE = "http://localhost:8000";
+const WS_BASE = "ws://localhost:8000";
+
+let supabaseClient = null;
+if (window.supabase) {
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
+
+let activeWebSocket = null;
+let currentSession = null;
 
 // Application State
 const state = {
   activeView: 'view-connect',
-  currentUser: { loggedIn: true, email: 'farmer.ramesh@agrisense.ai' },
-  devices: [
-    { id: 'AGS-1A', name: 'Node Alpha', sector: 'Sector 4 - Soil Moisture & Temp', battery: 82, signal: 'Strong', boundAt: '2026-06-15' },
-    { id: 'AGS-2B', name: 'Node Beta', sector: 'Sector 7 - Ambient Light & Humid', battery: 45, signal: 'Medium', boundAt: '2026-06-20' },
-    { id: 'AGS-3C', name: 'Node Gamma', sector: 'Sector 2 - Greenhouse Plot', battery: 92, signal: 'Strong', boundAt: '2026-07-02' }
-  ],
+  currentUser: { loggedIn: false, email: null, id: null, token: null },
+  devices: [],
   activeDeviceIndex: 0,
   telemetry: {
-    soilMoisture: 65,
-    temperature: 28.4,
+    soilMoisture: 0,
+    temperature: 0,
     tempUnit: 'C',
-    humidity: 72,
-    rainDetected: true,
-    soilTemp: 22.8,
-    solarRadiation: 845,
-    npk: { n: 140, p: 45, k: 210 },
-    battery: 94,
-    signal: -62,
+    humidity: 0,
+    rainDetected: false,
+    soilTemp: 0,
+    solarRadiation: 0,
+    npk: { n: 0, p: 0, k: 0 },
+    battery: 0,
+    signal: 0,
     targetThreshold: 70,
     stopThreshold: 85,
     maxRuntime: 20
   },
   // Split Analytics State
   analytics: {
-    selectedIndex: 3, // Defaults to '2h Ago' (which is index 3 chronologically [8h, 6h, 4h, 2h])
+    selectedIndex: 3, // Defaults to '2h Ago' (index 3 chronologically)
     series: {
       soil: { active: true, color: '#3ecf8e', label: 'Soil Moisture', unit: '%', min: 0, max: 100 },
       temp: { active: true, color: '#d29922', label: 'Temperature', unit: '°C', min: 0, max: 50 },
       humid: { active: true, color: '#58a6ff', label: 'Humidity', unit: '% RH', min: 0, max: 100 },
       solar: { active: true, color: '#a371f7', label: 'Solar PAR', unit: 'W/m²', min: 0, max: 1000 }
     },
-    // Rolling buffer of exactly 4 intervals (chronological: 8h ago, 6h ago, 4h ago, 2h ago)
     buffer: {
       labels: ['8h Ago', '6h Ago', '4h Ago', '2h Ago'],
-      soil: [58, 62, 60, 65],
-      temp: [22.5, 24.1, 26.8, 28.4],
-      humid: [85, 80, 76, 72],
-      solar: [120, 450, 780, 845],
-      rain: [0.0, 1.2, 3.5, 4.2],
-      npk: ['130/42/205', '135/44/208', '138/45/210', '140/45/210']
+      soil: [0, 0, 0, 0],
+      temp: [0, 0, 0, 0],
+      humid: [0, 0, 0, 0],
+      solar: [0, 0, 0, 0],
+      rain: [0, 0, 0, 0],
+      npk: ['0/0/0', '0/0/0', '0/0/0', '0/0/0']
     }
   },
   pump: {
-    state: 'RUNNING',
+    state: 'OFF',
     mode: 'auto'
   },
-  timers: [
-    { id: 1, time: '06:00 AM', duration: 15, days: ['M', 'T', 'W', 'T', 'F'], active: true },
-    { id: 2, time: '06:00 PM', duration: 10, days: ['M', 'T', 'W', 'T', 'F', 'S', 'S'], active: true }
-  ],
-  auditLog: [
-    { time: '2026-08-08 06:00 AM', unit: 'Relay Pump 1', trigger: 'Timer Schedule', action: 'RUNNING → OFF', moisture: '62%', duration: '15 mins' },
-    { time: '2026-08-07 06:00 PM', unit: 'Relay Pump 1', trigger: 'Smart Threshold', action: 'RUNNING → OFF', moisture: '24%', duration: '18 mins' },
-    { time: '2026-08-06 02:30 PM', unit: 'Relay Pump 1', trigger: 'Manual Override', action: 'RUNNING → OFF', moisture: '45%', duration: '10 mins' }
-  ],
+  timers: [],
+  auditLog: [],
   pendingModalAction: null
 };
 
 // Initialization
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   setupNavigation();
-  renderBoundDevices();
-  updateHeaderDeviceSelector();
-  renderTimers();
-  startTelemetrySimulation();
-  
-  // Analytics init
-  selectTimeInterval(3); // Default to '2h Ago' (index 3)
   initCanvasEvents();
-  renderCanvasChart();
 
   // Modal Backdrop click handler
-  document.getElementById('modalBackdrop').addEventListener('click', (e) => {
-    if (e.target.id === 'modalBackdrop') closeModal();
-  });
+  const backdrop = document.getElementById('modalBackdrop');
+  if (backdrop) {
+    backdrop.addEventListener('click', (e) => {
+      if (e.target.id === 'modalBackdrop') closeModal();
+    });
+  }
 
   window.addEventListener('resize', () => renderCanvasChart());
+
+  // Check active Supabase session
+  if (supabaseClient) {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+      onUserAuthenticated(session);
+    } else {
+      showAuthScreen();
+    }
+
+    supabaseClient.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        onUserAuthenticated(session);
+      } else {
+        showAuthScreen();
+      }
+    });
+  }
 });
+
+// ── Auth Handlers ────────────────────────────────────────────────────────
+function switchAuthTab(tab) {
+  const loginForm = document.getElementById('loginForm');
+  const signupForm = document.getElementById('signupForm');
+  const tabLogin = document.getElementById('tabLogin');
+  const tabSignup = document.getElementById('tabSignup');
+
+  if (tab === 'login') {
+    loginForm.style.display = 'block';
+    signupForm.style.display = 'none';
+    tabLogin.classList.add('active');
+    tabSignup.classList.remove('active');
+  } else {
+    loginForm.style.display = 'none';
+    signupForm.style.display = 'block';
+    tabLogin.classList.remove('active');
+    tabSignup.classList.add('active');
+  }
+}
+
+function showAuthScreen() {
+  document.getElementById('authScreen').style.display = 'flex';
+  document.getElementById('mainApp').style.display = 'none';
+  if (activeWebSocket) {
+    activeWebSocket.close();
+    activeWebSocket = null;
+  }
+}
+
+async function onUserAuthenticated(session) {
+  currentSession = session;
+  state.currentUser = {
+    loggedIn: true,
+    email: session.user.email,
+    id: session.user.id,
+    token: session.access_token
+  };
+
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('mainApp').style.display = 'block';
+
+  showToast(`Welcome back, ${session.user.email}`, 'success');
+
+  // Load user's bound devices from backend
+  await fetchUserDevices();
+
+  selectTimeInterval(3);
+  renderCanvasChart();
+}
+
+async function handleLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value.trim();
+  const errBox = document.getElementById('loginError');
+  const btn = document.getElementById('loginBtn');
+
+  errBox.style.display = 'none';
+  btn.disabled = true;
+  btn.innerText = 'Authenticating...';
+
+  try {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    // Session listener will trigger onUserAuthenticated
+  } catch (err) {
+    errBox.textContent = err.message || 'Login failed';
+    errBox.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span class="material-symbols-outlined">login</span> Sign In to Dashboard';
+  }
+}
+
+async function handleSignup() {
+  const email = document.getElementById('signupEmail').value.trim();
+  const password = document.getElementById('signupPassword').value.trim();
+  const confirm = document.getElementById('signupConfirm').value.trim();
+  const errBox = document.getElementById('signupError');
+  const btn = document.getElementById('signupBtn');
+
+  if (password !== confirm) {
+    errBox.textContent = 'Passwords do not match';
+    errBox.style.display = 'block';
+    return;
+  }
+
+  errBox.style.display = 'none';
+  btn.disabled = true;
+  btn.innerText = 'Creating Account...';
+
+  try {
+    const { data, error } = await supabaseClient.auth.signUp({ email, password });
+    if (error) throw error;
+    showToast('Account created! Please sign in.', 'success');
+    switchAuthTab('login');
+  } catch (err) {
+    errBox.textContent = err.message || 'Signup failed';
+    errBox.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span class="material-symbols-outlined">person_add</span> Create Account';
+  }
+}
+
+async function handleLogout() {
+  if (supabaseClient) {
+    await supabaseClient.auth.signOut();
+  }
+  showAuthScreen();
+  showToast('Logged out successfully', 'info');
+}
 
 // SPA Navigation Router
 function setupNavigation() {
@@ -126,22 +248,103 @@ function setupNavigation() {
   });
 }
 
+// ── Backend API & WebSocket Integration ──────────────────────────────────
+async function fetchUserDevices() {
+  if (!state.currentUser.token) return;
+
+  try {
+    const resp = await fetch(`${BACKEND_BASE}/api/devices`, {
+      headers: { 'Authorization': `Bearer ${state.currentUser.token}` }
+    });
+    if (!resp.ok) throw new Error('Failed to fetch devices');
+    const data = await resp.json();
+
+    state.devices = data.devices.map(d => ({
+      id: d.device_id,
+      name: d.device_name || d.device_id,
+      sector: d.sector || 'Active Field Sector',
+      battery: 100,
+      signal: 'Strong',
+      boundAt: d.created_at ? d.created_at.split('T')[0] : 'Today'
+    }));
+
+    renderBoundDevices();
+    updateHeaderDeviceSelector();
+
+    if (state.devices.length > 0) {
+      connectDeviceWebSocket(state.devices[state.activeDeviceIndex].id);
+    }
+  } catch (err) {
+    console.error('Error fetching devices:', err);
+    renderBoundDevices();
+    updateHeaderDeviceSelector();
+  }
+}
+
+function connectDeviceWebSocket(deviceId) {
+  if (activeWebSocket) {
+    activeWebSocket.close();
+    activeWebSocket = null;
+  }
+
+  const wsUrl = `${WS_BASE}/ws/${deviceId}`;
+  activeWebSocket = new WebSocket(wsUrl);
+
+  activeWebSocket.onopen = () => {
+    const statusText = document.getElementById('wsStatusText');
+    if (statusText) statusText.textContent = `${deviceId} (Live)`;
+  };
+
+  activeWebSocket.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'telemetry') {
+        state.telemetry.soilMoisture = data.soil_moisture || 0;
+        state.telemetry.temperature = data.temperature || 0;
+        state.telemetry.humidity = data.humidity || 0;
+        state.telemetry.soilTemp = data.soil_temp || 0;
+        state.telemetry.solarRadiation = data.solar_radiation || 0;
+        state.telemetry.rainDetected = !!data.rain_detected;
+        state.telemetry.battery = data.battery_pct || 100;
+        state.telemetry.signal = data.rssi || -70;
+
+        // Push to rolling buffer
+        const buf = state.analytics.buffer;
+        buf.soil.shift(); buf.soil.push(Math.round(data.soil_moisture));
+        buf.temp.shift(); buf.temp.push(Number(data.temperature.toFixed(1)));
+        buf.humid.shift(); buf.humid.push(Math.round(data.humidity));
+        buf.solar.shift(); buf.solar.push(Math.round(data.solar_radiation));
+
+        updateTelemetryUI();
+        renderCanvasChart();
+      }
+    } catch (e) {
+      console.error("WS message error", e);
+    }
+  };
+
+  activeWebSocket.onclose = () => {
+    const statusText = document.getElementById('wsStatusText');
+    if (statusText) statusText.textContent = `${deviceId} (Offline)`;
+  };
+}
+
 // Render Bound Devices List (Page 1)
 function renderBoundDevices() {
   const container = document.getElementById('boundDevicesList');
   const slotsBadge = document.getElementById('slotsUsedBadge');
   const limitBox = document.getElementById('limitWarningBox');
   
-  slotsBadge.textContent = `${state.devices.length} / 4 Nodes Active`;
+  if (slotsBadge) slotsBadge.textContent = `${state.devices.length} / 4 Nodes Active`;
 
-  if (state.devices.length >= 4) {
-    limitBox.style.display = 'flex';
-  } else {
-    limitBox.style.display = 'none';
+  if (limitBox) {
+    limitBox.style.display = state.devices.length >= 4 ? 'flex' : 'none';
   }
 
+  if (!container) return;
+
   if (state.devices.length === 0) {
-    container.innerHTML = `<div style="text-align: center; padding: 1.5rem; color: var(--text-muted);">No active hardware nodes bound to account.</div>`;
+    container.innerHTML = `<div style="text-align: center; padding: 1.5rem; color: var(--text-muted);">No active hardware nodes bound to account. Use the form on the left to add a device.</div>`;
     return;
   }
 
@@ -172,8 +375,55 @@ function renderBoundDevices() {
   `).join('');
 }
 
+function updateTelemetryUI() {
+  const hasDevice = state.devices.length > 0;
+  const moisture = state.telemetry.soilMoisture;
+
+  const soilValText = document.getElementById('soilValText');
+  if (soilValText) soilValText.textContent = hasDevice && moisture > 0 ? Math.round(moisture) : '--';
+
+  const gaugeVal = document.getElementById('soilGaugeVal');
+  if (gaugeVal) gaugeVal.setAttribute('stroke-dasharray', `${hasDevice && moisture > 0 ? Math.round(moisture) : 0}, 100`);
+
+  const soilStateText = document.getElementById('soilStateText');
+  if (soilStateText) {
+    if (!hasDevice || moisture === 0) {
+      soilStateText.textContent = 'No Connection';
+      soilStateText.style.color = 'var(--text-muted)';
+    } else if (moisture < state.telemetry.targetThreshold - 15) {
+      soilStateText.textContent = 'Dry';
+      soilStateText.style.color = 'var(--amber-warning)';
+    } else {
+      soilStateText.textContent = 'Optimal';
+      soilStateText.style.color = 'var(--green-primary)';
+    }
+  }
+
+  let tempVal = state.telemetry.temperature;
+  if (state.telemetry.tempUnit === 'F' && tempVal > 0) {
+    tempVal = (tempVal * 9/5) + 32;
+  }
+  const tempValText = document.getElementById('tempValText');
+  if (tempValText) tempValText.textContent = hasDevice && tempVal > 0 ? tempVal.toFixed(1) : '--';
+
+  const tempUnitText = document.getElementById('tempUnitText');
+  if (tempUnitText) tempUnitText.textContent = `°${state.telemetry.tempUnit}`;
+
+  const humidityValText = document.getElementById('humidityValText');
+  if (humidityValText) humidityValText.textContent = hasDevice && state.telemetry.humidity > 0 ? Math.round(state.telemetry.humidity) : '--';
+}
+
 function updateHeaderDeviceSelector() {
   const select = document.getElementById('headerDeviceSelect');
+  if (!select) return;
+
+  if (state.devices.length === 0) {
+    select.innerHTML = '<option value="">No Node Connected</option>';
+    const statusText = document.getElementById('wsStatusText');
+    if (statusText) statusText.textContent = 'No Node Connected';
+    return;
+  }
+
   select.innerHTML = state.devices.map((d, i) => `
     <option value="${i}">${d.name} (${d.id})</option>
   `).join('');
@@ -181,11 +431,15 @@ function updateHeaderDeviceSelector() {
 
   select.onchange = (e) => {
     state.activeDeviceIndex = parseInt(e.target.value);
-    showToast(`Switched active telemetry node: ${state.devices[state.activeDeviceIndex].name}`, 'info');
+    const selectedDev = state.devices[state.activeDeviceIndex];
+    if (selectedDev) {
+      showToast(`Switched telemetry node to: ${selectedDev.name}`, 'info');
+      connectDeviceWebSocket(selectedDev.id);
+    }
   };
 }
 
-function handleBindDevice() {
+async function handleBindDevice() {
   if (state.devices.length >= 4) {
     showToast('Maximum limit of 4 devices reached per account. Unbind a node first.', 'error');
     document.getElementById('limitWarningBox').style.display = 'flex';
@@ -193,6 +447,7 @@ function handleBindDevice() {
   }
 
   const id = document.getElementById('inputDeviceId').value.trim();
+  const pass = document.getElementById('inputDevicePass').value.trim();
   const name = document.getElementById('inputDeviceName').value.trim() || `Node ${state.devices.length + 1}`;
 
   if (!id) {
@@ -200,39 +455,96 @@ function handleBindDevice() {
     return;
   }
 
-  const newDevice = {
-    id: id.toUpperCase(),
-    name: name,
-    sector: 'Sector 4 - Active Field Node',
-    battery: 100,
-    signal: 'Strong',
-    boundAt: new Date().toISOString().split('T')[0]
-  };
+  const btn = document.getElementById('btnBindDevice');
+  if (btn) { btn.disabled = true; btn.innerText = 'Pairing Node...'; }
 
-  state.devices.push(newDevice);
-  renderBoundDevices();
-  updateHeaderDeviceSelector();
+  try {
+    const resp = await fetch(`${BACKEND_BASE}/api/devices/bind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_id: id.toUpperCase(),
+        device_password: pass || 'secret123',
+        device_name: name,
+        sector: 'Sector 4 - Field Plot',
+        user_token: state.currentUser.token
+      })
+    });
 
-  showToast(`Node ${id} initialized and paired to account`, 'success');
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || 'Failed to bind device');
+    }
+
+    showToast(`Node ${id} successfully paired!`, 'success');
+    await fetchUserDevices();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined">sensors</span> Initialize Node Pairing';
+    }
+  }
 }
 
 function promptUnbindDevice(index) {
   const device = state.devices[index];
   document.getElementById('modalTitle').textContent = 'Unbind Hardware Node';
-  document.getElementById('modalBody').textContent = `Are you sure you want to unbind ${device.name} (${device.id})? Unbinding releases this hardware node for pairing with another account.`;
-  
-  state.pendingModalAction = () => {
-    state.devices.splice(index, 1);
-    if (state.activeDeviceIndex >= state.devices.length) {
-      state.activeDeviceIndex = Math.max(0, state.devices.length - 1);
+  document.getElementById('modalBody').textContent = `Are you sure you want to unbind ${device.name} (${device.id})?`;
+
+  state.pendingModalAction = async () => {
+    try {
+      const resp = await fetch(`${BACKEND_BASE}/api/devices/${device.id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${state.currentUser.token}` }
+      });
+      if (!resp.ok) throw new Error('Unbind failed');
+      showToast(`Node ${device.id} unbound`, 'info');
+      await fetchUserDevices();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      closeModal();
     }
-    renderBoundDevices();
-    updateHeaderDeviceSelector();
-    closeModal();
-    showToast(`Node ${device.id} unbound successfully`, 'info');
   };
 
   document.getElementById('modalBackdrop').classList.add('active');
+}
+
+async function handleControlPumpToggle(checked) {
+  state.pump.state = checked ? 'RUNNING' : 'OFF';
+  state.pump.mode = 'manual';
+  evaluatePumpDecisionEngine();
+
+  const currentDev = state.devices[state.activeDeviceIndex];
+  if (currentDev) {
+    const cmdStr = checked ? 'PUMP_ON' : 'PUMP_OFF';
+    try {
+      await fetch(`${BACKEND_BASE}/api/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_id: currentDev.id,
+          command: cmdStr
+        })
+      });
+      showToast(`Command sent: ${cmdStr} for ${currentDev.id}`, 'success');
+    } catch (err) {
+      showToast('Failed to send command to backend', 'error');
+    }
+  }
+
+  const newLog = {
+    time: new Date().toLocaleString(),
+    unit: currentDev ? currentDev.name : 'Relay Pump 1',
+    trigger: 'Manual Switch',
+    action: checked ? 'OFF → RUNNING' : 'RUNNING → OFF',
+    moisture: `${Math.round(state.telemetry.soilMoisture)}%`,
+    duration: checked ? 'Active' : 'Manual Stop'
+  };
+  state.auditLog.unshift(newLog);
+  renderAuditLog();
 }
 
 function closeModal() {
@@ -244,17 +556,7 @@ function confirmModalAction() {
   if (state.pendingModalAction) state.pendingModalAction();
 }
 
-// Real-Time Telemetry Loop
-function startTelemetrySimulation() {
-  setInterval(() => {
-    const delta = (Math.random() - 0.48) * 0.3;
-    state.telemetry.soilMoisture = Math.min(100, Math.max(10, state.telemetry.soilMoisture + delta));
-    
-    updateTelemetryUI();
-    evaluatePumpDecisionEngine();
-  }, 3000);
-}
-
+// UI Telemetry Update Functions
 function updateTelemetryUI() {
   const moisture = Math.round(state.telemetry.soilMoisture);
   document.getElementById('soilValText').textContent = moisture;

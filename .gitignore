@@ -1,0 +1,21 @@
+# Environment and Secret configuration files
+.env
+*.env
+backend/.env
+
+# Python compilation and cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Build artifacts & Android App Bundles / Packages
+*.aab
+*.apk
+
+# IDE and OS metadata files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

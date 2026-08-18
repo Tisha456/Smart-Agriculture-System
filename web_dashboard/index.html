@@ -7,8 +7,79 @@
   <meta name="description" content="AI-based Smart Agriculture Decision Support & IoT Controls System">
   <link rel="stylesheet" href="styles.css">
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+  <!-- Supabase JS SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+
+  <!-- ═══════════════════════════════════════════════════
+       LOGIN / SIGNUP SCREEN
+       Shows first. Hidden after successful login.
+  ════════════════════════════════════════════════════ -->
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-card">
+
+      <!-- Brand -->
+      <div style="text-align: center; margin-bottom: 2rem;">
+        <span class="material-symbols-outlined" style="font-size: 40px; color: var(--green-primary);">sensors</span>
+        <h1 style="font-size: 1.5rem; font-weight: 800; margin-top: 0.5rem;">AgriSense AI</h1>
+        <p style="font-size: 13px; color: var(--text-secondary); margin-top: 0.25rem;">Smart Agriculture Control Platform</p>
+      </div>
+
+      <!-- Tab Toggle: Login / Signup -->
+      <div class="auth-tab-group">
+        <button class="auth-tab active" id="tabLogin" onclick="switchAuthTab('login')">Sign In</button>
+        <button class="auth-tab" id="tabSignup" onclick="switchAuthTab('signup')">Create Account</button>
+      </div>
+
+      <!-- Login Form -->
+      <form id="loginForm" onsubmit="event.preventDefault(); handleLogin();">
+        <div class="form-group">
+          <label class="form-label" for="loginEmail">Email Address</label>
+          <input class="form-input" id="loginEmail" type="email" placeholder="farmer@gmail.com" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="loginPassword">Password</label>
+          <input class="form-input" id="loginPassword" type="password" placeholder="••••••••" required>
+        </div>
+        <div id="loginError" class="auth-error" style="display:none;"></div>
+        <button class="btn-primary" type="submit" id="loginBtn">
+          <span class="material-symbols-outlined">login</span>
+          Sign In to Dashboard
+        </button>
+      </form>
+
+      <!-- Signup Form (hidden by default) -->
+      <form id="signupForm" style="display:none;" onsubmit="event.preventDefault(); handleSignup();">
+        <div class="form-group">
+          <label class="form-label" for="signupEmail">Email Address</label>
+          <input class="form-input" id="signupEmail" type="email" placeholder="farmer@gmail.com" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="signupPassword">Password</label>
+          <input class="form-input" id="signupPassword" type="password" placeholder="Min. 8 characters" required minlength="8">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="signupConfirm">Confirm Password</label>
+          <input class="form-input" id="signupConfirm" type="password" placeholder="Repeat password" required>
+        </div>
+        <div id="signupError" class="auth-error" style="display:none;"></div>
+        <button class="btn-primary" type="submit" id="signupBtn">
+          <span class="material-symbols-outlined">person_add</span>
+          Create Account
+        </button>
+      </form>
+
+      <p style="font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 1.5rem;">
+        Each account supports up to 4 ESP32 field nodes.
+      </p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       MAIN APP (hidden until login)
+  ════════════════════════════════════════════════════ -->
+  <div id="mainApp" style="display:none;">
 
   <!-- Top Header -->
   <header class="app-header">
@@ -46,17 +117,15 @@
     <!-- Header Actions -->
     <div class="header-actions">
       <select id="headerDeviceSelect" class="device-select">
-        <option value="0">Node Alpha (AGS-1A)</option>
-        <option value="1">Node Beta (AGS-2B)</option>
-        <option value="2">Node Gamma (AGS-3C)</option>
+        <option value="">No Node Connected</option>
       </select>
 
       <div class="status-pill">
-        <span class="pulse-dot"></span>
-        <span id="wsStatusText">Field Node 1</span>
+        <span class="pulse-dot" style="background-color: var(--text-muted);"></span>
+        <span id="wsStatusText">No Node Connected</span>
       </div>
 
-      <span class="material-symbols-outlined" style="color: var(--text-secondary); cursor: pointer; font-size: 22px;" title="Operator Profile">account_circle</span>
+      <span class="material-symbols-outlined" style="color: var(--text-secondary); cursor: pointer; font-size: 22px;" title="Operator Profile" onclick="handleLogout()">logout</span>
     </div>
   </header>
 
@@ -129,17 +198,17 @@
             <form id="bindForm" onsubmit="event.preventDefault(); handleBindDevice();">
               <div class="form-group">
                 <label class="form-label" for="inputDeviceId">Hardware Serial ID</label>
-                <input class="form-input mono" id="inputDeviceId" type="text" placeholder="e.g. AGS-7F3K21" required value="AGS-7F3K21">
+                <input class="form-input mono" id="inputDeviceId" type="text" placeholder="e.g. AGS-7F3K21" required value="">
               </div>
 
               <div class="form-group">
                 <label class="form-label" for="inputDevicePass">Pairing Secret</label>
-                <input class="form-input" id="inputDevicePass" type="password" placeholder="Device Password" required value="secret123">
+                <input class="form-input" id="inputDevicePass" type="password" placeholder="Device Password (e.g. secret123)" required value="">
               </div>
 
               <div class="form-group">
-                <label class="form-label" for="inputDeviceName">Location Sector</label>
-                <input class="form-input" id="inputDeviceName" type="text" placeholder="e.g. Sector 4 - Tomato Plot" value="Sector 4 - Tomato Plot">
+                <label class="form-label" for="inputDeviceName">Location Sector / Name</label>
+                <input class="form-input" id="inputDeviceName" type="text" placeholder="e.g. Sector 4 - Tomato Plot" value="">
               </div>
 
               <!-- 4-Device Warning Box Simulator -->
@@ -166,7 +235,7 @@
                 <span class="material-symbols-outlined" style="color: var(--green-primary);">hub</span>
                 Active Telemetry Nodes
               </h3>
-              <span class="status-pill" id="slotsUsedBadge">3 / 4 Nodes Active</span>
+              <span class="status-pill" id="slotsUsedBadge">0 / 4 Nodes Active</span>
             </div>
 
             <div class="devices-list" id="boundDevicesList">
@@ -231,16 +300,16 @@
           <div class="gauge-svg-wrapper">
             <svg class="gauge-svg" width="110" height="110" viewBox="0 0 36 36" style="transform: rotate(-90deg);">
               <path class="gauge-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"></path>
-              <path class="gauge-ring-val" id="soilGaugeVal" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" stroke-dasharray="65, 100"></path>
+              <path class="gauge-ring-val" id="soilGaugeVal" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" stroke-dasharray="0, 100"></path>
             </svg>
             <div class="gauge-text-val">
-              <span id="soilValText">65</span><span style="font-size: 12px; color: var(--text-secondary);">%</span>
+              <span id="soilValText">--</span><span style="font-size: 12px; color: var(--text-secondary);">%</span>
             </div>
           </div>
 
           <div style="width: 100%; display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);">
             <span>Target: <strong id="targetThresholdText" style="color: var(--green-primary);">70%</strong></span>
-            <span id="soilStateText" style="color: var(--green-primary); font-weight: 600;">Optimal</span>
+            <span id="soilStateText" style="color: var(--text-muted); font-weight: 600;">No Connection</span>
           </div>
         </div>
 
@@ -248,11 +317,11 @@
         <div class="telemetry-card">
           <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">2. Ambient Temperature</span>
           <div>
-            <div class="stat-value"><span id="tempValText">28.4</span><span class="stat-unit" id="tempUnitText">°C</span></div>
+            <div class="stat-value"><span id="tempValText">--</span><span class="stat-unit" id="tempUnitText">°C</span></div>
             <div class="stat-subtitle">DHT22 Digital Probe</div>
           </div>
           <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width: 62%; background: var(--amber-warning);"></div>
+            <div class="progress-bar-fill" style="width: 0%; background: var(--amber-warning);"></div>
           </div>
         </div>
 
@@ -260,11 +329,11 @@
         <div class="telemetry-card">
           <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">3. Relative Humidity & VPD</span>
           <div>
-            <div class="stat-value"><span id="humidityValText">72</span><span class="stat-unit">% RH</span></div>
-            <div class="stat-subtitle">Vapor Pressure Deficit: 1.15 kPa</div>
+            <div class="stat-value"><span id="humidityValText">--</span><span class="stat-unit">% RH</span></div>
+            <div class="stat-subtitle">Vapor Pressure Deficit: -- kPa</div>
           </div>
           <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width: 72%;"></div>
+            <div class="progress-bar-fill" style="width: 0%;"></div>
           </div>
         </div>
 
@@ -272,8 +341,8 @@
         <div class="telemetry-card">
           <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">4. Rain Sensor & Forecast</span>
           <div>
-            <span class="status-badge-flat" id="rainStateBadge" style="background: rgba(210,153,34,0.15); color: var(--amber-warning); border: 1px solid rgba(210,153,34,0.3); font-size: 10px;">PRECIPITATION DETECTED</span>
-            <div class="stat-subtitle" style="margin-top: 0.4rem;">Accumulation: 4.2mm • 24h Prob: 85%</div>
+            <span class="status-badge-flat" id="rainStateBadge" style="background: var(--bg-subtle); color: var(--text-muted); border: 1px solid var(--border-color); font-size: 10px;">NO SENSOR SIGNAL</span>
+            <div class="stat-subtitle" style="margin-top: 0.4rem;">Accumulation: 0.0mm • 24h Prob: --%</div>
           </div>
           <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">OpenWeather Synced</div>
         </div>
@@ -282,11 +351,11 @@
         <div class="telemetry-card">
           <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">5. Root Zone Temperature</span>
           <div>
-            <div class="stat-value">22.8<span class="stat-unit">°C</span></div>
+            <div class="stat-value">--<span class="stat-unit">°C</span></div>
             <div class="stat-subtitle">DS18B20 Sub-Surface Probe</div>
           </div>
           <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width: 50%;"></div>
+            <div class="progress-bar-fill" style="width: 0%;"></div>
           </div>
         </div>
 
@@ -294,11 +363,11 @@
         <div class="telemetry-card">
           <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">6. Solar Radiation (PAR)</span>
           <div>
-            <div class="stat-value">845<span class="stat-unit">W/m²</span></div>
-            <div class="stat-subtitle">Photosynthetic Photon Flux: High</div>
+            <div class="stat-value">--<span class="stat-unit">W/m²</span></div>
+            <div class="stat-subtitle">Photosynthetic Photon Flux: --</div>
           </div>
           <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width: 84%; background: var(--amber-warning);"></div>
+            <div class="progress-bar-fill" style="width: 0%; background: var(--amber-warning);"></div>
           </div>
         </div>
 
@@ -307,13 +376,13 @@
           <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">7. NPK Soil Nutrients</span>
           <div>
             <div style="font-size: 13px; font-family: var(--font-mono); display: flex; justify-content: space-between; margin-bottom: 2px;">
-              <span>N: 140 mg/kg</span> <span style="color: var(--green-primary);">Good</span>
+              <span>N: -- mg/kg</span> <span style="color: var(--text-muted);">--</span>
             </div>
             <div style="font-size: 13px; font-family: var(--font-mono); display: flex; justify-content: space-between; margin-bottom: 2px;">
-              <span>P: 45 mg/kg</span> <span style="color: var(--green-primary);">Optimal</span>
+              <span>P: -- mg/kg</span> <span style="color: var(--text-muted);">--</span>
             </div>
             <div style="font-size: 13px; font-family: var(--font-mono); display: flex; justify-content: space-between;">
-              <span>K: 210 mg/kg</span> <span style="color: var(--amber-warning);">High</span>
+              <span>K: -- mg/kg</span> <span style="color: var(--text-muted);">--</span>
             </div>
           </div>
           <div class="stat-subtitle">RS485 NPK Sensor Probe</div>
@@ -323,9 +392,9 @@
         <div class="telemetry-card">
           <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">8. ESP32 Telemetry Status</span>
           <div>
-            <div style="font-size: 13px; font-family: var(--font-mono); color: var(--green-primary); font-weight: 600;">Status: ONLINE</div>
-            <div class="stat-subtitle" style="margin-top: 0.2rem;">Battery: 94% (3.98V) • RSSI: -62 dBm</div>
-            <div class="stat-subtitle">Uptime: 14d 06h • Heap: 184 KB</div>
+            <div style="font-size: 13px; font-family: var(--font-mono); color: var(--rose-danger); font-weight: 600;">Status: OFFLINE</div>
+            <div class="stat-subtitle" style="margin-top: 0.2rem;">Battery: -- • RSSI: -- dBm</div>
+            <div class="stat-subtitle">Uptime: -- • Heap: --</div>
           </div>
           <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Firmware v2.1.0</div>
         </div>
@@ -430,7 +499,7 @@
                 </h3>
                 <p style="font-size: 12px; color: var(--text-secondary);">High-power AC relay actuator on ESP32 GPIO16</p>
               </div>
-              <span class="status-badge-flat running" id="controlPumpStatusBadge">PUMP RUNNING</span>
+              <span class="status-badge-flat off" id="controlPumpStatusBadge">PUMP OFF</span>
             </div>
 
             <!-- Flow Switch & Override Toggle -->
@@ -440,7 +509,7 @@
                 <span style="font-size: 11px; color: var(--text-secondary);">Direct hardware state toggling</span>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="controlPumpSwitch" onchange="handleControlPumpToggle(this.checked)" checked>
+                <input type="checkbox" id="controlPumpSwitch" onchange="handleControlPumpToggle(this.checked)">
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -774,6 +843,8 @@
       </div>
     </div>
   </div>
+
+  </div> <!-- end #mainApp -->
 
   <script src="app.js"></script>
 </body>
