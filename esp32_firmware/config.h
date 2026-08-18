@@ -23,26 +23,34 @@
 #define DEVICE_PASSWORD    "changeme"
 
 // ── Sensor Pin Assignments (ESP32 DevKit) ──────────────────────────────
-// Refer to AgriSense_Full_System_Tutorial.md for wiring diagram.
-#define DHT_PIN            4      // DHT22 — Air Temperature & Humidity (GPIO 4)
-#define DHT_TYPE           DHT22  // DHT sensor type (DHT11 or DHT22)
-#define SOIL_MOISTURE_PIN  34     // Capacitive Soil Moisture — Analog (GPIO 34)
-#define DS18B20_PIN        5      // DS18B20 — Soil Temperature (GPIO 5)
-#define RAIN_SENSOR_PIN    33     // Rain Sensor — Digital (GPIO 33)
+//
+//  YOUR HARDWARE:
+//    • DHT11           → Air Temperature & Humidity
+//    • Soil Moisture   → Capacitive analog sensor
+//    • Rain Sensor     → Digital output module
+//    • Relay (1-ch)    → Water Pump control
+//    • ESP32-CAM       → Separate module (not wired to this ESP32)
+//
+#define DHT_PIN            4      // DHT11 DATA pin → GPIO 4
+#define DHT_TYPE           DHT11  // DHT11 sensor (not DHT22)
+#define SOIL_MOISTURE_PIN  34     // Soil Moisture Sensor AOUT → GPIO 34 (ADC)
+#define RAIN_SENSOR_PIN    33     // Rain Sensor DO → GPIO 33 (Digital)
 
-// ── Relay / Actuator Pin Assignments ───────────────────────────────────
-// 4-channel relay module (active-LOW: LOW = relay ON)
-#define RELAY_PUMP_PIN     16     // Relay CH1 — Main Water Pump (GPIO 16)
-#define RELAY_VALVE1_PIN   17     // Relay CH2 — Zone 1 Solenoid Valve (GPIO 17)
-#define RELAY_FOGGER_PIN   18     // Relay CH3 — Misting Foggers (GPIO 18)
-#define RELAY_LIGHTS_PIN   19     // Relay CH4 — Field LED Lighting (GPIO 19)
+// ── Relay / Actuator Pin Assignment ────────────────────────────────────
+// Single-channel relay module (active-LOW: LOW = relay ON)
+#define RELAY_PUMP_PIN     16     // Relay IN → GPIO 16 (Water Pump)
 
 // ── Soil Moisture Calibration ──────────────────────────────────────────
 // Measure the raw ADC reading with the sensor in dry air → SOIL_DRY_VALUE
 // Submerge the probe in water → SOIL_WET_VALUE
 // The firmware maps these to 0–100%.
 #define SOIL_DRY_VALUE     4095   // ESP32 12-bit ADC max (dry air)
-#define SOIL_WET_VALUE     1500   // Typical reading when submerged
+#define SOIL_WET_VALUE     1500   // Typical reading when submerged in water
+
+// ── Soil Temperature Offset ────────────────────────────────────────────
+// No DS18B20 probe wired — soil temp is estimated from air temperature.
+// Soil is typically a few degrees cooler than ambient air.
+#define SOIL_TEMP_OFFSET   -2.5   // Estimated soil temp = air temp + offset
 
 // ── Timing ─────────────────────────────────────────────────────────────
 #define TELEMETRY_INTERVAL_MS    10000   // Send sensor readings every 10 seconds

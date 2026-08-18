@@ -1,24 +1,38 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════
- * AgriSense AI — ESP32 Firmware  v2.1.0
+ * AgriSense AI — ESP32 Sensor Node Firmware  v2.1.0
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * What this firmware does:
- *   1. Reads sensors every 10 seconds (soil moisture, air temp/humidity,
- *      soil temperature, rain state).
- *   2. POSTs the JSON reading to the Python backend (/api/telemetry).
- *   3. Polls the backend every 5 seconds for relay commands
- *      (/api/device/command/{device_id}) and actuates the relays.
+ * HARDWARE CONNECTED TO THIS ESP32:
+ *   • DHT11            — Air Temperature & Humidity       (GPIO 4)
+ *   • Soil Moisture    — Capacitive analog sensor         (GPIO 34)
+ *   • Rain Sensor      — Digital output module            (GPIO 33)
+ *   • 1-Channel Relay  — Water Pump control               (GPIO 16)
  *
- * Required Libraries (install via Arduino Library Manager):
- *   - DHT sensor library   (by Adafruit)
- *   - OneWire              (by Paul Stoffregen)
- *   - DallasTemperature    (by Miles Burton)
- *   - ArduinoJson          (by Benoit Blanchon)
- *   - HTTPClient           (built-in with ESP32 Arduino core)
- *   - WiFi                 (built-in with ESP32 Arduino core)
+ * NOT CONNECTED (sent as 0 / estimated):
+ *   • DS18B20 (soil temp)  → Estimated from air temp (−2.5°C offset)
+ *   • Solar / PAR sensor   → Sent as 0
+ *   • NPK sensor           → Not used (dashboard shows "--")
+ *   • ESP32-CAM             → Separate module, not part of this node
  *
- * Board:  ESP32 Dev Module  (Arduino IDE → Tools → Board)
+ * WHAT THIS FIRMWARE DOES:
+ *   1. Reads all sensors every 10 seconds.
+ *   2. Builds a JSON payload matching the backend TelemetryPayload model:
+ *        { device_id, device_password, soil_moisture, temperature,
+ *          humidity, soil_temp, solar_radiation, rain_detected,
+ *          battery_pct, rssi }
+ *   3. POSTs the JSON to the Python backend → POST /api/telemetry
+ *   4. Polls for relay commands every 5 seconds → GET /api/device/command/{id}
+ *   5. Actuates the pump relay based on commands (PUMP_ON / PUMP_OFF).
+ *
+ * REQUIRED ARDUINO LIBRARIES (install via Library Manager):
+ *   • DHT sensor library   (by Adafruit)
+ *   • Adafruit Unified Sensor (by Adafruit) — dependency for DHT
+ *   • ArduinoJson          (by Benoit Blanchon)
+ *   • WiFi                 (built-in with ESP32 core)
+ *   • HTTPClient           (built-in with ESP32 core)
+ *
+ * BOARD SETTING:  ESP32 Dev Module  (Arduino IDE → Tools → Board)
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -26,8 +40,6 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
 
 // ── Project configuration (edit config.h before uploading) ──────────────
 #include "../config.h"
@@ -36,18 +48,15 @@
 // SENSOR OBJECTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-// DHT22 — Air temperature & humidity
+// DHT11 — Air temperature & humidity
 DHT dht(DHT_PIN, DHT_TYPE);
-
-// DS18B20 — Soil temperature (OneWire bus)
-OneWire oneWire(DS18B20_PIN);
-DallasTemperature soilTempSensor(&oneWire);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TIMING
 // ═══════════════════════════════════════════════════════════════════════════
-unsigned long lastTelemetryMs  = 0;
+unsigned long lastTelemetryMs   = 0;
 unsigned long lastCommandPollMs = 0;
+unsigned long bootTimeMs        = 0;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SETUP
@@ -57,22 +66,22 @@ void setup() {
   Serial.println();
   Serial.println("═══════════════════════════════════════");
   Serial.println("  AgriSense AI — ESP32 Firmware v" FIRMWARE_VERSION);
+  Serial.println("  Hardware: DHT11 | Soil Moisture | Rain | Pump Relay");
   Serial.println("═══════════════════════════════════════");
 
   // ── Sensor pins ────────────────────────────────────────────────────────
   dht.begin();
-  soilTempSensor.begin();
   pinMode(SOIL_MOISTURE_PIN, INPUT);
   pinMode(RAIN_SENSOR_PIN, INPUT);
 
-  // ── Relay pins (active-LOW — start with relays OFF = HIGH) ────────────
-  pinMode(RELAY_PUMP_PIN,   OUTPUT);  digitalWrite(RELAY_PUMP_PIN,   HIGH);
-  pinMode(RELAY_VALVE1_PIN, OUTPUT);  digitalWrite(RELAY_VALVE1_PIN, HIGH);
-  pinMode(RELAY_FOGGER_PIN, OUTPUT);  digitalWrite(RELAY_FOGGER_PIN, HIGH);
-  pinMode(RELAY_LIGHTS_PIN, OUTPUT);  digitalWrite(RELAY_LIGHTS_PIN, HIGH);
+  // ── Relay pin (active-LOW — start with relay OFF = HIGH) ──────────────
+  pinMode(RELAY_PUMP_PIN, OUTPUT);
+  digitalWrite(RELAY_PUMP_PIN, HIGH);   // Pump OFF at boot
 
   // ── Wi-Fi ──────────────────────────────────────────────────────────────
   connectToWiFi();
+
+  bootTimeMs = millis();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -132,27 +141,26 @@ void connectToWiFi() {
 // READ ALL SENSORS & POST TO BACKEND
 // ═══════════════════════════════════════════════════════════════════════════
 void sendTelemetry() {
-  // ── 1. Read DHT22 (air temperature & humidity) ────────────────────────
+
+  // ── 1. Read DHT11 (air temperature & humidity) ────────────────────────
   float humidity    = dht.readHumidity();
   float temperature = dht.readTemperature();   // Celsius
 
   if (isnan(humidity) || isnan(temperature)) {
-    Serial.println("[Sensor] DHT22 read failed — skipping this cycle.");
-    return;
+    Serial.println("[Sensor] DHT11 read failed — skipping this cycle.");
+    return;   // Don't send corrupt data
   }
 
   // ── 2. Read soil moisture (analog → percentage) ───────────────────────
+  //    ESP32 ADC is 12-bit (0–4095). We map dry/wet calibration values
+  //    from config.h to a 0–100% range.
   int rawSoil = analogRead(SOIL_MOISTURE_PIN);
   float soilMoisture = map(rawSoil, SOIL_DRY_VALUE, SOIL_WET_VALUE, 0, 100);
-  soilMoisture = constrain(soilMoisture, 0, 100);
+  soilMoisture = constrain(soilMoisture, 0.0, 100.0);
 
-  // ── 3. Read DS18B20 soil temperature ──────────────────────────────────
-  soilTempSensor.requestTemperatures();
-  float soilTemp = soilTempSensor.getTempCByIndex(0);
-  if (soilTemp == DEVICE_DISCONNECTED_C) {
-    soilTemp = temperature - 2.5;   // Fallback: estimate from air temp
-    Serial.println("[Sensor] DS18B20 not found — using estimated soil temp.");
-  }
+  // ── 3. Estimate soil temperature from air temperature ─────────────────
+  //    No DS18B20 wired — use the offset defined in config.h
+  float soilTemp = temperature + SOIL_TEMP_OFFSET;
 
   // ── 4. Read rain sensor (digital: LOW = rain detected) ────────────────
   bool rainDetected = (digitalRead(RAIN_SENSOR_PIN) == LOW);
@@ -163,14 +171,19 @@ void sendTelemetry() {
   // ── Print to Serial Monitor ───────────────────────────────────────────
   Serial.println("───────────── Telemetry ─────────────");
   Serial.printf("  Soil Moisture : %.1f %%\n", soilMoisture);
-  Serial.printf("  Air Temp      : %.1f °C\n", temperature);
-  Serial.printf("  Humidity      : %.1f %%\n", humidity);
-  Serial.printf("  Soil Temp     : %.1f °C\n", soilTemp);
+  Serial.printf("  Air Temp      : %.1f °C  (DHT11)\n", temperature);
+  Serial.printf("  Humidity      : %.1f %%  (DHT11)\n", humidity);
+  Serial.printf("  Soil Temp     : %.1f °C  (estimated)\n", soilTemp);
   Serial.printf("  Rain          : %s\n", rainDetected ? "YES" : "NO");
   Serial.printf("  RSSI          : %d dBm\n", rssi);
+  Serial.printf("  Raw Soil ADC  : %d\n", rawSoil);
   Serial.println("─────────────────────────────────────");
 
   // ── 6. Build JSON payload ─────────────────────────────────────────────
+  //    This MUST match the backend TelemetryPayload model exactly:
+  //      device_id, device_password, soil_moisture, temperature,
+  //      humidity, soil_temp, solar_radiation, rain_detected,
+  //      battery_pct, rssi
   StaticJsonDocument<512> doc;
   doc["device_id"]        = DEVICE_ID;
   doc["device_password"]  = DEVICE_PASSWORD;
@@ -178,26 +191,34 @@ void sendTelemetry() {
   doc["temperature"]      = temperature;
   doc["humidity"]         = humidity;
   doc["soil_temp"]        = soilTemp;
-  doc["solar_radiation"]  = 0.0;          // No LDR/PAR sensor wired yet
+  doc["solar_radiation"]  = 0.0;          // No solar/PAR sensor wired
   doc["rain_detected"]    = rainDetected;
-  doc["battery_pct"]      = 100.0;        // USB-powered — always 100
+  doc["battery_pct"]      = 100.0;        // USB-powered — always 100%
   doc["rssi"]             = rssi;
 
   String jsonPayload;
   serializeJson(doc, jsonPayload);
 
   // ── 7. HTTP POST to backend ───────────────────────────────────────────
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[HTTP] WiFi not connected — skipping POST.");
+    return;
+  }
+
   HTTPClient http;
   String url = String(BACKEND_URL) + "/api/telemetry";
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
+  http.setTimeout(5000);   // 5-second timeout
 
   int httpCode = http.POST(jsonPayload);
 
   if (httpCode == 200) {
-    Serial.println("[HTTP] Telemetry sent OK.");
+    Serial.println("[HTTP] Telemetry sent OK ✓");
+  } else if (httpCode < 0) {
+    Serial.printf("[HTTP] Connection failed: %s\n", http.errorToString(httpCode).c_str());
   } else {
-    Serial.printf("[HTTP] Telemetry POST failed — code: %d\n", httpCode);
+    Serial.printf("[HTTP] Telemetry POST error — HTTP %d\n", httpCode);
     String resp = http.getString();
     Serial.println("[HTTP] Response: " + resp);
   }
@@ -205,12 +226,15 @@ void sendTelemetry() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// POLL BACKEND FOR RELAY COMMANDS
+// POLL BACKEND FOR PUMP COMMANDS
 // ═══════════════════════════════════════════════════════════════════════════
 void pollForCommands() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
   HTTPClient http;
   String url = String(BACKEND_URL) + "/api/device/command/" + DEVICE_ID;
   http.begin(url);
+  http.setTimeout(5000);
 
   int httpCode = http.GET();
 
@@ -225,8 +249,10 @@ void pollForCommands() {
       Serial.printf("[CMD] Received command: %s\n", command.c_str());
       executeCommand(command);
     }
+  } else if (httpCode < 0) {
+    Serial.printf("[CMD] Connection failed: %s\n", http.errorToString(httpCode).c_str());
   } else {
-    Serial.printf("[CMD] Poll failed — code: %d\n", httpCode);
+    Serial.printf("[CMD] Poll error — HTTP %d\n", httpCode);
   }
   http.end();
 }
@@ -235,7 +261,8 @@ void pollForCommands() {
 // EXECUTE A RELAY COMMAND
 // ═══════════════════════════════════════════════════════════════════════════
 void executeCommand(String command) {
-  // Active-LOW relay: LOW = ON, HIGH = OFF
+  // Active-LOW relay: LOW = relay ON, HIGH = relay OFF
+
   if (command == "PUMP_ON") {
     digitalWrite(RELAY_PUMP_PIN, LOW);
     Serial.println("[Relay] Water Pump → ON");
@@ -243,30 +270,6 @@ void executeCommand(String command) {
   else if (command == "PUMP_OFF") {
     digitalWrite(RELAY_PUMP_PIN, HIGH);
     Serial.println("[Relay] Water Pump → OFF");
-  }
-  else if (command == "VALVE1_ON") {
-    digitalWrite(RELAY_VALVE1_PIN, LOW);
-    Serial.println("[Relay] Zone 1 Valve → ON");
-  }
-  else if (command == "VALVE1_OFF") {
-    digitalWrite(RELAY_VALVE1_PIN, HIGH);
-    Serial.println("[Relay] Zone 1 Valve → OFF");
-  }
-  else if (command == "FOGGER_ON") {
-    digitalWrite(RELAY_FOGGER_PIN, LOW);
-    Serial.println("[Relay] Foggers → ON");
-  }
-  else if (command == "FOGGER_OFF") {
-    digitalWrite(RELAY_FOGGER_PIN, HIGH);
-    Serial.println("[Relay] Foggers → OFF");
-  }
-  else if (command == "LIGHTS_ON") {
-    digitalWrite(RELAY_LIGHTS_PIN, LOW);
-    Serial.println("[Relay] Field Lights → ON");
-  }
-  else if (command == "LIGHTS_OFF") {
-    digitalWrite(RELAY_LIGHTS_PIN, HIGH);
-    Serial.println("[Relay] Field Lights → OFF");
   }
   else {
     Serial.println("[CMD] Unknown command: " + command);
