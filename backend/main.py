@@ -147,6 +147,18 @@ async def evaluate_moisture_mode(device_id: str, ds: dict):
 async def evaluate_timer_mode(device_id: str, ds: dict):
     """Auto-pump based on scheduled timers from the timers table."""
     pump_on = ds.get("pump_on", False)
+    rain    = ds.get("last_rain_detected", False)
+
+    # Safety: if currently raining and pump is ON → turn it off immediately
+    if rain and pump_on:
+        await queue_pump_command(device_id, "PUMP_OFF", "Rain Detected — Timer Paused")
+        ds["pump_on"] = False
+        ds["pump_on_since"] = None
+        return
+
+    # If raining, don't start a new timer cycle
+    if rain:
+        return
 
     try:
         timers_resp = supabase.table("timers") \
@@ -160,7 +172,8 @@ async def evaluate_timer_mode(device_id: str, ds: dict):
         return
 
     now = datetime.now()
-    day_names = ["M", "T", "W", "T", "F", "S", "S"]
+    # Unique 2-letter abbreviations: Mo Tu We Th Fr Sa Su
+    day_names = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
     current_day = day_names[now.weekday()]
     inside_window = False
 
@@ -195,6 +208,7 @@ async def evaluate_timer_mode(device_id: str, ds: dict):
         await queue_pump_command(device_id, "PUMP_OFF", "Timer Schedule")
         ds["pump_on"] = False
         ds["pump_on_since"] = None
+
 
 
 async def queue_pump_command(device_id: str, command: str, trigger: str):

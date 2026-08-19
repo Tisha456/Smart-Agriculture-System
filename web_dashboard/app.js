@@ -273,6 +273,7 @@ async function fetchUserDevices() {
 
     if (state.devices.length > 0) {
       connectDeviceWebSocket(state.devices[state.activeDeviceIndex].id);
+      loadTimers();   // Load saved timers from backend for active device
     }
   } catch (err) {
     console.error('Error fetching devices:', err);
@@ -611,6 +612,22 @@ function updateTelemetryUI() {
   document.getElementById('ctrlStartVal').textContent = `${state.telemetry.targetThreshold}%`;
   document.getElementById('ctrlStopVal').textContent = `${state.telemetry.stopThreshold}%`;
   document.getElementById('ctrlRuntimeVal').textContent = `${state.telemetry.maxRuntime} mins`;
+
+  // ── Rain Sensor Badge ──────────────────────────────────────────────────────
+  const rainBadge = document.getElementById('rainStateBadge');
+  if (rainBadge) {
+    if (state.telemetry.rainDetected) {
+      rainBadge.textContent = 'RAIN DETECTED';
+      rainBadge.style.background = 'rgba(88, 166, 255, 0.15)';
+      rainBadge.style.color = 'var(--blue-accent)';
+      rainBadge.style.border = '1px solid rgba(88,166,255,0.4)';
+    } else {
+      rainBadge.textContent = 'DRY / CLEAR';
+      rainBadge.style.background = 'rgba(62, 207, 142, 0.12)';
+      rainBadge.style.color = 'var(--green-primary)';
+      rainBadge.style.border = '1px solid rgba(62,207,142,0.3)';
+    }
+  }
 }
 
 function toggleTempUnit() {
@@ -711,10 +728,24 @@ function updateAutomationModeUI(mode) {
   }
 }
 
-function handleForceStop() {
+async function handleForceStop() {
   state.pump.state = 'OFF';
   evaluatePumpDecisionEngine();
-  showToast('Force Stop Executed: Emergency shutdown', 'error');
+
+  const currentDev = state.devices[state.activeDeviceIndex];
+  if (currentDev) {
+    try {
+      await fetch(`${BACKEND_BASE}/api/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: currentDev.id, command: 'PUMP_OFF' })
+      });
+    } catch (err) {
+      console.error('Force Stop failed to reach backend:', err);
+    }
+  }
+
+  showToast('Force Stop Executed: Emergency shutdown sent to device', 'error');
 }
 
 function updateStartThreshold(val) {
@@ -739,7 +770,11 @@ function triggerSimulatedDrySpell() {
   showToast('Simulated Dry Spell Event Triggered! Soil moisture dropped to 14.5%', 'warning');
 }
 
-// Timer Schedule Manager
+// ── Timer Schedule Manager (Backend-Connected) ────────────────────────────────
+// Day abbreviations match backend: Mo Tu We Th Fr Sa Su
+const ALL_DAYS = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+const DAY_LABELS = { Mo:'M', Tu:'T', We:'W', Th:'T', Fr:'F', Sa:'S', Su:'S' };
+
 function renderTimers() {
   const container = document.getElementById('timersList');
   if (!container) return;
@@ -757,15 +792,15 @@ function renderTimers() {
           ${timer.time} <span style="font-size: 11px; color: var(--text-secondary); font-weight: 400;">(${timer.duration} Mins)</span>
         </div>
         <div style="display: flex; gap: 0.2rem; margin-top: 0.35rem;">
-          ${['M','T','W','T','F','S','S'].map(d => `
-            <span class="day-badge ${timer.days.includes(d) ? 'active' : ''}">${d}</span>
+          ${ALL_DAYS.map(d => `
+            <span class="day-badge ${(timer.days || []).includes(d) ? 'active' : ''}" title="${d}">${DAY_LABELS[d]}</span>
           `).join('')}
         </div>
       </div>
 
       <div style="display: flex; align-items: center; gap: 0.75rem;">
         <label class="toggle-switch">
-          <input type="checkbox" ${timer.active ? 'checked' : ''} onchange="toggleTimerActive(${timer.id})">
+          <input type="checkbox" ${timer.active ? 'checked' : ''} onchange="toggleTimerActive(${timer.id}, this.checked)">
           <span class="toggle-slider"></span>
         </label>
         <button class="btn-secondary" style="color: var(--rose-danger); padding: 0.2rem 0.5rem;" onclick="deleteTimer(${timer.id})">
@@ -776,30 +811,84 @@ function renderTimers() {
   `).join('');
 }
 
-function handleAddTimer() {
+async function loadTimers() {
+  const currentDev = state.devices[state.activeDeviceIndex];
+  if (!currentDev || !state.currentUser.token) return;
+
+  try {
+    const resp = await fetch(`${BACKEND_BASE}/api/timers/${currentDev.id}`, {
+      headers: { 'Authorization': `Bearer ${state.currentUser.token}` }
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    state.timers = (data.timers || []).map(t => ({
+      id: t.id,
+      time: t.start_time,
+      duration: t.duration_mins,
+      days: t.active_days || [],
+      active: t.is_active
+    }));
+    renderTimers();
+  } catch (err) {
+    console.error('Failed to load timers:', err);
+  }
+}
+
+async function handleAddTimer() {
+  const currentDev = state.devices[state.activeDeviceIndex];
+  if (!currentDev) {
+    showToast('No device connected. Bind a node first.', 'error');
+    return;
+  }
+
   const timeInput = document.getElementById('timerTimeInput').value;
+  if (!timeInput) {
+    showToast('Please select a time for the timer.', 'error');
+    return;
+  }
   const durationInput = parseInt(document.getElementById('timerDurationInput').value) || 15;
 
+  // Build 24h time string for backend
+  const start_time_24h = timeInput; // input[type="time"] already gives HH:MM
+
+  // Format for display (12h)
   const [h, m] = timeInput.split(':');
   const hour = parseInt(h);
   const ampm = hour >= 12 ? 'PM' : 'AM';
   const hour12 = hour % 12 || 12;
   const formattedTime = `${hour12 < 10 ? '0' + hour12 : hour12}:${m} ${ampm}`;
 
-  const newTimer = {
-    id: Date.now(),
-    time: formattedTime,
-    duration: durationInput,
-    days: ['M', 'T', 'W', 'T', 'F'],
-    active: true
-  };
+  // Default: weekdays Mo-Fr
+  const activeDays = ['Mo','Tu','We','Th','Fr'];
 
-  state.timers.push(newTimer);
-  renderTimers();
-  showToast(`Added scheduled timer: Daily ${formattedTime} (${durationInput} mins)`, 'success');
+  try {
+    const resp = await fetch(`${BACKEND_BASE}/api/timers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_id: currentDev.id,
+        start_time: start_time_24h,
+        duration_mins: durationInput,
+        active_days: activeDays,
+        user_token: state.currentUser.token
+      })
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || 'Failed to add timer');
+    }
+
+    showToast(`Timer added: Daily ${formattedTime} (${durationInput} mins)`, 'success');
+    await loadTimers();  // Reload from backend to get server-assigned ID
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
-function toggleTimerActive(id) {
+async function toggleTimerActive(id, isChecked) {
+  // Optimistically update local state
   const timer = state.timers.find(t => t.id === id);
   if (timer) {
     timer.active = !timer.active;
