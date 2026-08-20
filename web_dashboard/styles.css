@@ -178,6 +178,34 @@ button, input, select {
   background-color: var(--green-primary);
 }
 
+/* ── Device Connection State Colors ──────────────────────────────────────── */
+/* OFFLINE: ESP32 hasn't sent a heartbeat recently — grey, matches "no data" look */
+.val-offline {
+  color: var(--text-muted) !important;
+}
+
+/* ONLINE_NO_SENSORS: ESP32 is alive and posting, but sensor reads are failing —
+   green, because the connection itself is real and healthy */
+.val-nosensor {
+  color: var(--green-primary) !important;
+}
+
+.status-pill.offline {
+  background: rgba(110, 118, 129, 0.12);
+  border-color: rgba(110, 118, 129, 0.3);
+  color: var(--text-muted);
+}
+
+.status-pill.nosensor {
+  background: var(--green-badge-bg);
+  border-color: rgba(62, 207, 142, 0.3);
+  color: var(--green-primary);
+}
+
+.pulse-dot.offline {
+  background-color: var(--text-muted);
+}
+
 /* Layout Main Container */
 .main-content {
   max-width: 1400px;

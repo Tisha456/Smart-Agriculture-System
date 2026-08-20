@@ -209,7 +209,28 @@ After clicking **Run**, you should see:
 
 ---
 
-## STEP 6: Verify Everything Was Created
+## ⚠️ STEP 6: Fix Device Binding (REQUIRED — Run This Too)
+
+The security rules in Step 5 protect your data, but they also accidentally block the Python backend from registering new devices (because the backend uses the anon key, not your personal login token).
+
+Run this in a **new SQL query** to allow the backend to insert devices:
+
+```sql
+-- Allow Python backend (anon key) to INSERT new devices on behalf of logged-in users.
+-- SELECT, UPDATE, DELETE are still protected — only the user can read/modify their own devices.
+CREATE POLICY "Backend inserts devices"
+ON devices FOR INSERT
+WITH CHECK (true);
+```
+
+After clicking **Run**, you should see:
+> **✅ Success. No rows returned.**
+
+Without this, clicking "Initialize Node Pairing" on the website will silently fail.
+
+---
+
+## STEP 7: Verify Everything Was Created
 
 1. On the left sidebar, click **"Table Editor"**
 2. You should see 4 tables listed:
@@ -224,3 +245,4 @@ After clicking **Run**, you should see:
 
 Tell me when you see all 4 tables in the Table Editor.
 After that, I will write the Python Backend server code.
+

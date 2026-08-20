@@ -1,16 +1,28 @@
-// ── Supabase & Backend Configuration ─────────────────────────────────────
+// ── Supabase Configuration ─────────────────────────────────────────────────
 const SUPABASE_URL = "https://iqmrpwvbmfkhychhditg.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxbXJwd3ZibWZraHljaGhkaXRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyNTY5OTEsImV4cCI6MjEwMTgzMjk5MX0.i8wCUSDmc6DI8ZLK6wQeaZDzQqZCEIzkZUrrg2RnefQ";
-const BACKEND_BASE = "http://localhost:8000";
-const WS_BASE = "ws://localhost:8000";
+// Hybrid architecture: website talks directly to Supabase (no FastAPI for telemetry).
+// FastAPI is kept only for future automation/decision engine.
 
 let supabaseClient = null;
 if (window.supabase) {
   supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 
-let activeWebSocket = null;
+// FastAPI is used ONLY for pump automation (moisture + timer modes).
+// Telemetry, manual pump control, and device pairing go direct to Supabase
+// and work fully even when this backend is not running.
+const BACKEND_BASE = (location.protocol === 'file:')
+  ? 'http://10.87.216.17:8000'   // edit if the backend moves — matches backend/main.py
+  : location.origin;             // served by FastAPI itself when hosted (main.py serve_dashboard)
+
+let activeRealtimeChannel = null;       // Supabase Realtime channel for telemetry_data
+let activeStatusChannel   = null;       // Supabase Realtime channel for device_status (heartbeat)
+let presenceTickerHandle  = null;       // setInterval handle — detects offline devices
 let currentSession = null;
+
+// A missed heartbeat window: the ESP32 heartbeats every 10s, so 3 misses = offline.
+const OFFLINE_AFTER_MS = 30000;
 
 // Application State
 const state = {
@@ -19,6 +31,8 @@ const state = {
   devices: [],
   activeDeviceIndex: 0,
   telemetry: {
+    hasData: false,          // false until first real packet from ESP32
+    lastDataMs: null,        // timestamp of last received telemetry
     soilMoisture: 0,
     temperature: 0,
     tempUnit: 'C',
@@ -56,10 +70,31 @@ const state = {
     state: 'OFF',
     automationMode: 'NONE'   // 'NONE' | 'MOISTURE' | 'TIMER'
   },
+  // Live connection state for the currently selected device, fed by
+  // device_status heartbeats. This is what "connected" actually means —
+  // separate from Supabase Realtime channel subscription state, which only
+  // proves the BROWSER reached Supabase, not that the ESP32 is alive.
+  presence: {
+    lastSeenMs: null,
+    sensorsOk: false,
+    sensorFlags: {}
+  },
   timers: [],
   auditLog: [],
   pendingModalAction: null
 };
+
+// Derived connection state for the active device:
+//   'NO_DEVICE'           — nothing bound to this account yet
+//   'OFFLINE'             — no heartbeat, or heartbeat older than OFFLINE_AFTER_MS
+//   'ONLINE_NO_SENSORS'   — heartbeat is fresh, but sensors_ok = false
+//   'LIVE'                — heartbeat is fresh and sensors_ok = true
+function connectionState() {
+  if (!state.devices.length) return 'NO_DEVICE';
+  if (!state.presence.lastSeenMs) return 'OFFLINE';
+  if (Date.now() - state.presence.lastSeenMs > OFFLINE_AFTER_MS) return 'OFFLINE';
+  return state.presence.sensorsOk ? 'LIVE' : 'ONLINE_NO_SENSORS';
+}
 
 // Initialization
 document.addEventListener('DOMContentLoaded', async () => {
@@ -75,6 +110,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   window.addEventListener('resize', () => renderCanvasChart());
+
+  // Re-evaluate connection state every 5s. This is required because going
+  // OFFLINE produces no database event to react to — only the passage of
+  // time (no heartbeat for OFFLINE_AFTER_MS) tells us the ESP32 died.
+  presenceTickerHandle = setInterval(() => {
+    updateTelemetryUI();
+    updateHeaderStatusPill();
+  }, 5000);
 
   // Check active Supabase session
   if (supabaseClient) {
@@ -118,10 +161,16 @@ function switchAuthTab(tab) {
 function showAuthScreen() {
   document.getElementById('authScreen').style.display = 'flex';
   document.getElementById('mainApp').style.display = 'none';
-  if (activeWebSocket) {
-    activeWebSocket.close();
-    activeWebSocket = null;
+  if (activeRealtimeChannel) {
+    supabaseClient.removeChannel(activeRealtimeChannel);
+    activeRealtimeChannel = null;
   }
+  if (activeStatusChannel) {
+    supabaseClient.removeChannel(activeStatusChannel);
+    activeStatusChannel = null;
+  }
+  state.devices = [];
+  state.presence = { lastSeenMs: null, sensorsOk: false, sensorFlags: {} };
 }
 
 async function onUserAuthenticated(session) {
@@ -136,6 +185,10 @@ async function onUserAuthenticated(session) {
   document.getElementById('authScreen').style.display = 'none';
   document.getElementById('mainApp').style.display = 'block';
 
+  // Show real email in the Session Active card on the Connect page
+  const emailDisplay = document.getElementById('sessionEmailDisplay');
+  if (emailDisplay) emailDisplay.textContent = session.user.email;
+
   showToast(`Welcome back, ${session.user.email}`, 'success');
 
   // Load user's bound devices from backend
@@ -143,6 +196,7 @@ async function onUserAuthenticated(session) {
 
   selectTimeInterval(3);
   renderCanvasChart();
+  updateTelemetryUI();
 }
 
 async function handleLogin() {
@@ -200,6 +254,11 @@ async function handleSignup() {
 }
 
 async function handleLogout() {
+  // Unsubscribe realtime channel before logging out
+  if (activeRealtimeChannel) {
+    supabaseClient.removeChannel(activeRealtimeChannel);
+    activeRealtimeChannel = null;
+  }
   if (supabaseClient) {
     await supabaseClient.auth.signOut();
   }
@@ -248,18 +307,20 @@ function setupNavigation() {
   });
 }
 
-// ── Backend API & WebSocket Integration ──────────────────────────────────
+// ── Supabase Direct Integration ────────────────────────────────────────────
 async function fetchUserDevices() {
-  if (!state.currentUser.token) return;
+  if (!supabaseClient || !state.currentUser.id) return;
 
   try {
-    const resp = await fetch(`${BACKEND_BASE}/api/devices`, {
-      headers: { 'Authorization': `Bearer ${state.currentUser.token}` }
-    });
-    if (!resp.ok) throw new Error('Failed to fetch devices');
-    const data = await resp.json();
+    // Query devices table directly — RLS ensures users only see their own devices
+    const { data, error } = await supabaseClient
+      .from('devices')
+      .select('*')
+      .eq('user_id', state.currentUser.id);
 
-    state.devices = data.devices.map(d => ({
+    if (error) throw error;
+
+    state.devices = (data || []).map(d => ({
       id: d.device_id,
       name: d.device_name || d.device_id,
       sector: d.sector || 'Active Field Sector',
@@ -268,91 +329,150 @@ async function fetchUserDevices() {
       boundAt: d.created_at ? d.created_at.split('T')[0] : 'Today'
     }));
 
+    // Clamp in case the previously active index no longer exists (e.g. that
+    // device was just unbound).
+    if (state.activeDeviceIndex >= state.devices.length) {
+      state.activeDeviceIndex = 0;
+    }
+
     renderBoundDevices();
     updateHeaderDeviceSelector();
+    updateHeaderStatusPill();
 
     if (state.devices.length > 0) {
-      connectDeviceWebSocket(state.devices[state.activeDeviceIndex].id);
-      loadTimers();   // Load saved timers from backend for active device
+      subscribeToDeviceRealtime(state.devices[state.activeDeviceIndex].id);
+      loadTimers();
     }
   } catch (err) {
     console.error('Error fetching devices:', err);
     renderBoundDevices();
     updateHeaderDeviceSelector();
+    updateHeaderStatusPill();
   }
 }
 
-function connectDeviceWebSocket(deviceId) {
-  if (activeWebSocket) {
-    activeWebSocket.close();
-    activeWebSocket = null;
+function subscribeToDeviceRealtime(deviceId) {
+  // Remove old channels if switching devices
+  if (activeRealtimeChannel) {
+    supabaseClient.removeChannel(activeRealtimeChannel);
+    activeRealtimeChannel = null;
+  }
+  if (activeStatusChannel) {
+    supabaseClient.removeChannel(activeStatusChannel);
+    activeStatusChannel = null;
   }
 
-  const wsUrl = `${WS_BASE}/ws/${deviceId}`;
-  activeWebSocket = new WebSocket(wsUrl);
+  // Reset presence — we don't know this device's live state until either
+  // the one-shot fetch below returns, or a heartbeat event arrives.
+  state.presence = { lastSeenMs: null, sensorsOk: false, sensorFlags: {} };
+  updateTelemetryUI();
+  updateHeaderStatusPill();
 
-  activeWebSocket.onopen = () => {
-    const statusText = document.getElementById('wsStatusText');
-    if (statusText) statusText.textContent = `${deviceId} (Live)`;
-  };
+  // One-shot fetch of the last known heartbeat, so a page refresh reflects
+  // reality immediately instead of showing OFFLINE until the next tick.
+  supabaseClient
+    .from('device_status')
+    .select('last_seen_at, sensors_ok, sensor_flags')
+    .eq('device_id', deviceId)
+    .maybeSingle()
+    .then(({ data }) => {
+      if (data) applyPresenceRow(data);
+    });
 
-  activeWebSocket.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
+  // Subscribe to new rows in telemetry_data for this device
+  activeRealtimeChannel = supabaseClient
+    .channel(`telemetry-${deviceId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'telemetry_data',
+        filter: `device_id=eq.${deviceId}`
+      },
+      (payload) => {
+        const data = payload.new;
 
-      if (data.type === 'telemetry') {
-        state.telemetry.soilMoisture = data.soil_moisture || 0;
-        state.telemetry.temperature = data.temperature || 0;
-        state.telemetry.humidity = data.humidity || 0;
-        state.telemetry.soilTemp = data.soil_temp || 0;
+        state.telemetry.hasData = true;
+        state.telemetry.lastDataMs = Date.now();
+
+        state.telemetry.soilMoisture   = data.soil_moisture   || 0;
+        state.telemetry.temperature    = data.temperature     || 0;
+        state.telemetry.humidity       = data.humidity        || 0;
+        state.telemetry.soilTemp       = data.soil_temp       || 0;
         state.telemetry.solarRadiation = data.solar_radiation || 0;
-        state.telemetry.rainDetected = !!data.rain_detected;
-        state.telemetry.battery = data.battery_pct || 100;
-        state.telemetry.signal = data.rssi || -70;
+        state.telemetry.rainDetected   = !!data.rain_detected;
+        state.telemetry.battery        = data.battery_pct     || 100;
+        state.telemetry.signal         = data.rssi            || -70;
 
-        // Push to rolling buffer
+        // Push to rolling analytics buffer
         const buf = state.analytics.buffer;
-        buf.soil.shift(); buf.soil.push(Math.round(data.soil_moisture));
-        buf.temp.shift(); buf.temp.push(Number(data.temperature.toFixed(1)));
+        buf.soil.shift();  buf.soil.push(Math.round(data.soil_moisture));
+        buf.temp.shift();  buf.temp.push(Number((data.temperature || 0).toFixed(1)));
         buf.humid.shift(); buf.humid.push(Math.round(data.humidity));
-        buf.solar.shift(); buf.solar.push(Math.round(data.solar_radiation));
+        buf.solar.shift(); buf.solar.push(Math.round(data.solar_radiation || 0));
 
         updateTelemetryUI();
         renderCanvasChart();
-
-      } else if (data.type === 'pump_update') {
-        // Backend Decision Engine changed the pump state
-        state.pump.state = data.pump_state || 'OFF';
-        if (data.automation_mode) {
-          state.pump.automationMode = data.automation_mode;
-          updateAutomationModeUI(data.automation_mode);
-        }
-        evaluatePumpDecisionEngine();
-        const trigger = data.trigger || 'Auto';
-        showToast(`Pump ${state.pump.state === 'RUNNING' ? 'ON' : 'OFF'} — ${trigger}`, state.pump.state === 'RUNNING' ? 'success' : 'info');
-
-      } else if (data.type === 'mode_update') {
-        // Backend confirmed an automation mode change
-        if (data.automation_mode) {
-          state.pump.automationMode = data.automation_mode;
-          updateAutomationModeUI(data.automation_mode);
-        }
-        if (data.start_threshold) {
-          state.telemetry.targetThreshold = data.start_threshold;
-          state.telemetry.stopThreshold = data.stop_threshold || 85;
-          state.telemetry.maxRuntime = data.max_runtime_mins || 20;
-          updateTelemetryUI();
-        }
       }
-    } catch (e) {
-      console.error("WS message error", e);
-    }
-  };
+    )
+    .subscribe();
 
-  activeWebSocket.onclose = () => {
-    const statusText = document.getElementById('wsStatusText');
-    if (statusText) statusText.textContent = `${deviceId} (Offline)`;
-  };
+  // Subscribe to device_status heartbeat updates — this, not the telemetry
+  // channel, is what proves the ESP32 itself is alive and reachable.
+  activeStatusChannel = supabaseClient
+    .channel(`status-${deviceId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'device_status', filter: `device_id=eq.${deviceId}` },
+      (payload) => applyPresenceRow(payload.new)
+    )
+    .subscribe();
+}
+
+// Apply a device_status row (from the one-shot fetch or a Realtime event)
+// to presence state, then re-render everything that depends on it.
+function applyPresenceRow(row) {
+  if (!row) return;
+  state.presence.lastSeenMs  = row.last_seen_at ? new Date(row.last_seen_at).getTime() : Date.now();
+  state.presence.sensorsOk   = !!row.sensors_ok;
+  state.presence.sensorFlags = row.sensor_flags || {};
+  updateTelemetryUI();
+  updateHeaderStatusPill();
+}
+
+// Drives the header status-pill text/color from connectionState().
+function updateHeaderStatusPill() {
+  const pill = document.getElementById('headerStatusPill');
+  const dot  = document.getElementById('headerPulseDot');
+  const text = document.getElementById('wsStatusText');
+  if (!pill || !dot || !text) return;
+
+  const currentDev = state.devices[state.activeDeviceIndex];
+  const cs = connectionState();
+
+  pill.classList.remove('offline', 'nosensor');
+  dot.classList.remove('offline');
+
+  if (cs === 'NO_DEVICE') {
+    text.textContent = 'No Node Connected';
+    pill.classList.add('offline');
+    dot.classList.add('offline');
+    return;
+  }
+
+  const label = currentDev ? `${currentDev.name} (${currentDev.id})` : 'Node';
+
+  if (cs === 'OFFLINE') {
+    text.textContent = `${label} — OFFLINE`;
+    pill.classList.add('offline');
+    dot.classList.add('offline');
+  } else if (cs === 'ONLINE_NO_SENSORS') {
+    text.textContent = `${label} — ONLINE (no sensor data)`;
+    pill.classList.add('nosensor');
+  } else {
+    text.textContent = `${label} — LIVE`;
+  }
 }
 
 // Render Bound Devices List (Page 1)
@@ -383,7 +503,9 @@ function renderBoundDevices() {
         <div>
           <h4 style="font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 0.4rem;">
             ${device.name} (${device.id})
-            <span class="pulse-dot"></span>
+            <span class="pulse-dot${idx === state.activeDeviceIndex && connectionState() === 'OFFLINE' ? ' offline' : ''}"
+              style="${idx === state.activeDeviceIndex ? '' : 'background-color: var(--text-muted);'}"
+              title="${idx === state.activeDeviceIndex ? connectionState() : 'Select to see live status'}"></span>
           </h4>
           <p style="font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono); margin-top: 0.15rem;">${device.sector}</p>
         </div>
@@ -401,43 +523,6 @@ function renderBoundDevices() {
   `).join('');
 }
 
-function updateTelemetryUI() {
-  const hasDevice = state.devices.length > 0;
-  const moisture = state.telemetry.soilMoisture;
-
-  const soilValText = document.getElementById('soilValText');
-  if (soilValText) soilValText.textContent = hasDevice && moisture > 0 ? Math.round(moisture) : '--';
-
-  const gaugeVal = document.getElementById('soilGaugeVal');
-  if (gaugeVal) gaugeVal.setAttribute('stroke-dasharray', `${hasDevice && moisture > 0 ? Math.round(moisture) : 0}, 100`);
-
-  const soilStateText = document.getElementById('soilStateText');
-  if (soilStateText) {
-    if (!hasDevice || moisture === 0) {
-      soilStateText.textContent = 'No Connection';
-      soilStateText.style.color = 'var(--text-muted)';
-    } else if (moisture < state.telemetry.targetThreshold - 15) {
-      soilStateText.textContent = 'Dry';
-      soilStateText.style.color = 'var(--amber-warning)';
-    } else {
-      soilStateText.textContent = 'Optimal';
-      soilStateText.style.color = 'var(--green-primary)';
-    }
-  }
-
-  let tempVal = state.telemetry.temperature;
-  if (state.telemetry.tempUnit === 'F' && tempVal > 0) {
-    tempVal = (tempVal * 9/5) + 32;
-  }
-  const tempValText = document.getElementById('tempValText');
-  if (tempValText) tempValText.textContent = hasDevice && tempVal > 0 ? tempVal.toFixed(1) : '--';
-
-  const tempUnitText = document.getElementById('tempUnitText');
-  if (tempUnitText) tempUnitText.textContent = `°${state.telemetry.tempUnit}`;
-
-  const humidityValText = document.getElementById('humidityValText');
-  if (humidityValText) humidityValText.textContent = hasDevice && state.telemetry.humidity > 0 ? Math.round(state.telemetry.humidity) : '--';
-}
 
 function updateHeaderDeviceSelector() {
   const select = document.getElementById('headerDeviceSelect');
@@ -445,8 +530,7 @@ function updateHeaderDeviceSelector() {
 
   if (state.devices.length === 0) {
     select.innerHTML = '<option value="">No Node Connected</option>';
-    const statusText = document.getElementById('wsStatusText');
-    if (statusText) statusText.textContent = 'No Node Connected';
+    updateHeaderStatusPill();
     return;
   }
 
@@ -460,7 +544,9 @@ function updateHeaderDeviceSelector() {
     const selectedDev = state.devices[state.activeDeviceIndex];
     if (selectedDev) {
       showToast(`Switched telemetry node to: ${selectedDev.name}`, 'info');
-      connectDeviceWebSocket(selectedDev.id);
+      subscribeToDeviceRealtime(selectedDev.id);
+      loadTimers();
+      renderBoundDevices();
     }
   };
 }
@@ -472,40 +558,58 @@ async function handleBindDevice() {
     return;
   }
 
-  const id = document.getElementById('inputDeviceId').value.trim();
-  const pass = document.getElementById('inputDevicePass').value.trim();
-  const name = document.getElementById('inputDeviceName').value.trim() || `Node ${state.devices.length + 1}`;
+  const id     = document.getElementById('inputDeviceId').value.trim();
+  const secret = document.getElementById('inputDevicePairingSecret').value.trim();
+  const name   = document.getElementById('inputDeviceName').value.trim() || `Node ${state.devices.length + 1}`;
 
   if (!id) {
-    showToast('Please enter a valid Hardware ID', 'error');
+    showToast('Please enter the Hardware Serial ID (e.g. AGS-0001)', 'error');
+    return;
+  }
+  if (!secret) {
+    showToast('Please enter the Pairing Secret printed on your device', 'error');
     return;
   }
 
   const btn = document.getElementById('btnBindDevice');
   if (btn) { btn.disabled = true; btn.innerText = 'Pairing Node...'; }
 
+  // Plain-language messages for each failure the claim_device() RPC can return.
+  // See documents/supabase_presence_and_pairing.sql for the gate each code maps to.
+  const CLAIM_ERROR_MESSAGES = {
+    NOT_LOGGED_IN:     'Your session expired. Please log in again.',
+    UNKNOWN_DEVICE:    'No AgriSense board with that serial and secret exists. Check the label on your ESP32.',
+    DEVICE_OFFLINE:    'Board recognised, but it hasn\'t reported in. Power on the ESP32, wait 15 seconds, then retry.',
+    CLAIMED_BY_OTHER:  'That board is already paired to another account.',
+    ALREADY_YOURS:     'You\'ve already paired this board.'
+  };
+
   try {
-    const resp = await fetch(`${BACKEND_BASE}/api/devices/bind`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        device_id: id.toUpperCase(),
-        device_password: pass || 'secret123',
-        device_name: name,
-        sector: 'Sector 4 - Field Plot',
-        user_token: state.currentUser.token
-      })
+    // claim_device() is the ONLY way into the devices table — it verifies the
+    // serial+secret against device_registry (real hardware) AND requires a
+    // fresh heartbeat in device_status (the board must be powered on right now).
+    const { data, error } = await supabaseClient.rpc('claim_device', {
+      p_device_id: id.toUpperCase(),
+      p_secret: secret,
+      p_name: name,
+      p_sector: name
     });
 
-    if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.detail || 'Failed to bind device');
+    if (error) throw new Error(error.message || 'Failed to bind device.');
+
+    if (!data || !data.ok) {
+      const code = data ? data.code : 'UNKNOWN_DEVICE';
+      throw new Error(CLAIM_ERROR_MESSAGES[code] || `Pairing failed (${code}).`);
     }
 
-    showToast(`Node ${id} successfully paired!`, 'success');
+    showToast(`Node ${id.toUpperCase()} successfully paired!`, 'success');
+    document.getElementById('inputDeviceId').value = '';
+    document.getElementById('inputDevicePairingSecret').value = '';
+    document.getElementById('inputDeviceName').value = '';
     await fetchUserDevices();
   } catch (err) {
     showToast(err.message, 'error');
+    console.error('Bind error:', err);
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -521,11 +625,14 @@ function promptUnbindDevice(index) {
 
   state.pendingModalAction = async () => {
     try {
-      const resp = await fetch(`${BACKEND_BASE}/api/devices/${device.id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${state.currentUser.token}` }
-      });
-      if (!resp.ok) throw new Error('Unbind failed');
+      // Delete device directly from Supabase — RLS enforces user owns this device
+      const { error } = await supabaseClient
+        .from('devices')
+        .delete()
+        .eq('device_id', device.id)
+        .eq('user_id', state.currentUser.id);
+
+      if (error) throw new Error(error.message);
       showToast(`Node ${device.id} unbound`, 'info');
       await fetchUserDevices();
     } catch (err) {
@@ -547,15 +654,18 @@ async function handleControlPumpToggle(checked) {
 
   if (currentDev) {
     try {
-      // POST /api/command — backend will also set automation_mode to NONE
-      await fetch(`${BACKEND_BASE}/api/command`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device_id: currentDev.id, command: cmdStr })
-      });
+      // Insert command directly into Supabase — ESP32 polls and picks it up
+      const { error } = await supabaseClient
+        .from('device_commands')
+        .insert({
+          device_id: currentDev.id,
+          command: cmdStr,
+          executed: false
+        });
+      if (error) throw new Error(error.message);
       showToast(`Manual command sent: ${cmdStr}`, 'success');
     } catch (err) {
-      showToast('Failed to send command to backend', 'error');
+      showToast('Failed to send command: ' + err.message, 'error');
     }
   }
 
@@ -585,36 +695,108 @@ function confirmModalAction() {
 }
 
 // UI Telemetry Update Functions
+// Three connection states, three displays (per user spec):
+//   OFFLINE            -> 00, grey   — ESP32 not sending heartbeats
+//   ONLINE_NO_SENSORS  -> 00, green  — ESP32 alive, sensor reads failing
+//   LIVE               -> real values, normal color
 function updateTelemetryUI() {
+  const offlineBanner = document.getElementById('offlineBanner');
+  const noDataBanner   = document.getElementById('noSensorDataBanner');
+
+  const soilValText         = document.getElementById('soilValText');
+  const tempValText         = document.getElementById('tempValText');
+  const humidityValText     = document.getElementById('humidityValText');
+  const targetThresholdText = document.getElementById('targetThresholdText');
+  const gaugeVal             = document.getElementById('soilGaugeVal');
+  const soilStateText        = document.getElementById('soilStateText');
+  const rainBadge             = document.getElementById('rainStateBadge');
+
+  // Threshold displays reflect user-configured settings, not live sensor
+  // data, so they stay populated regardless of connection state.
+  document.getElementById('ctrlStartVal').textContent = `${state.telemetry.targetThreshold}%`;
+  document.getElementById('ctrlStopVal').textContent = `${state.telemetry.stopThreshold}%`;
+  document.getElementById('ctrlRuntimeVal').textContent = `${state.telemetry.maxRuntime} mins`;
+
+  const cs = connectionState();
+
+  function showZeroed(colorClass, label) {
+    [soilValText, tempValText].forEach(el => {
+      if (!el) return;
+      el.classList.remove('val-offline', 'val-nosensor');
+      el.classList.add(colorClass);
+      el.textContent = '00';
+    });
+    if (humidityValText) {
+      humidityValText.classList.remove('val-offline', 'val-nosensor');
+      humidityValText.classList.add(colorClass);
+      humidityValText.textContent = '00%';
+    }
+    if (targetThresholdText) targetThresholdText.textContent = `${state.telemetry.targetThreshold}%`;
+    if (gaugeVal) gaugeVal.setAttribute('stroke-dasharray', '0, 100');
+    if (soilStateText) {
+      soilStateText.textContent = label;
+      soilStateText.style.color = colorClass === 'val-offline' ? 'var(--text-muted)' : 'var(--green-primary)';
+    }
+  }
+
+  if (cs === 'NO_DEVICE' || cs === 'OFFLINE') {
+    showZeroed('val-offline', cs === 'NO_DEVICE' ? 'No Device' : 'Offline');
+    if (rainBadge) {
+      rainBadge.textContent = 'SENSORS OFFLINE';
+      rainBadge.style.background = 'rgba(110,118,129,0.15)';
+      rainBadge.style.color = 'var(--text-muted)';
+      rainBadge.style.border = '1px solid rgba(110,118,129,0.3)';
+    }
+    if (offlineBanner) offlineBanner.style.display = (cs === 'OFFLINE') ? 'flex' : 'none';
+    if (noDataBanner) noDataBanner.style.display = 'none';
+    return;
+  }
+
+  if (cs === 'ONLINE_NO_SENSORS') {
+    showZeroed('val-nosensor', 'Online — No Sensor Data');
+    if (rainBadge) {
+      rainBadge.textContent = 'SENSOR CHECK NEEDED';
+      rainBadge.style.background = 'rgba(62,207,142,0.12)';
+      rainBadge.style.color = 'var(--green-primary)';
+      rainBadge.style.border = '1px solid rgba(62,207,142,0.3)';
+    }
+    if (offlineBanner) offlineBanner.style.display = 'none';
+    if (noDataBanner) noDataBanner.style.display = 'flex';
+    return;
+  }
+
+  // ── LIVE: real sensor data ──────────────────────────────────────────────────
+  if (offlineBanner) offlineBanner.style.display = 'none';
+  if (noDataBanner) noDataBanner.style.display = 'none';
+  [soilValText, tempValText, humidityValText].forEach(el => {
+    if (el) el.classList.remove('val-offline', 'val-nosensor');
+  });
+
   const moisture = Math.round(state.telemetry.soilMoisture);
-  document.getElementById('soilValText').textContent = moisture;
+  if (soilValText) soilValText.textContent = moisture;
+  if (gaugeVal) gaugeVal.setAttribute('stroke-dasharray', `${moisture}, 100`);
 
-  const gaugeVal = document.getElementById('soilGaugeVal');
-  gaugeVal.setAttribute('stroke-dasharray', `${moisture}, 100`);
-
-  if (moisture < state.telemetry.targetThreshold - 15) {
-    document.getElementById('soilStateText').textContent = 'Dry';
-    document.getElementById('soilStateText').style.color = 'var(--amber-warning)';
-  } else {
-    document.getElementById('soilStateText').textContent = 'Optimal';
-    document.getElementById('soilStateText').style.color = 'var(--green-primary)';
+  if (soilStateText) {
+    if (moisture < state.telemetry.targetThreshold - 15) {
+      soilStateText.textContent = 'Dry';
+      soilStateText.style.color = 'var(--amber-warning)';
+    } else {
+      soilStateText.textContent = 'Optimal';
+      soilStateText.style.color = 'var(--green-primary)';
+    }
   }
 
   let tempVal = state.telemetry.temperature;
   if (state.telemetry.tempUnit === 'F') {
     tempVal = (tempVal * 9/5) + 32;
   }
-  document.getElementById('tempValText').textContent = tempVal.toFixed(1);
-  document.getElementById('tempUnitText').textContent = `°${state.telemetry.tempUnit}`;
-  document.getElementById('humidityValText').textContent = `${state.telemetry.humidity}%`;
-  document.getElementById('targetThresholdText').textContent = `${state.telemetry.targetThreshold}%`;
+  if (tempValText) tempValText.textContent = tempVal.toFixed(1);
+  const tempUnitText = document.getElementById('tempUnitText');
+  if (tempUnitText) tempUnitText.textContent = `°${state.telemetry.tempUnit}`;
+  if (humidityValText) humidityValText.textContent = `${Math.round(state.telemetry.humidity)}%`;
+  if (targetThresholdText) targetThresholdText.textContent = `${state.telemetry.targetThreshold}%`;
 
-  document.getElementById('ctrlStartVal').textContent = `${state.telemetry.targetThreshold}%`;
-  document.getElementById('ctrlStopVal').textContent = `${state.telemetry.stopThreshold}%`;
-  document.getElementById('ctrlRuntimeVal').textContent = `${state.telemetry.maxRuntime} mins`;
-
-  // ── Rain Sensor Badge ──────────────────────────────────────────────────────
-  const rainBadge = document.getElementById('rainStateBadge');
+  // ── Rain Sensor Badge ─────────────────────────────────────────────────────
   if (rainBadge) {
     if (state.telemetry.rainDetected) {
       rainBadge.textContent = 'RAIN DETECTED';
@@ -661,11 +843,15 @@ async function setAutomationMode(mode) {
     return;
   }
 
+  // Optimistically show the selected mode, but revert below if the backend
+  // (FastAPI, which runs the actual decision engine) can't be reached —
+  // showing "MOISTURE AUTO" while nothing is evaluating it would be the same
+  // silent-failure problem as the fake device pairing.
   state.pump.automationMode = mode;
   updateAutomationModeUI(mode);
 
   try {
-    await fetch(`${BACKEND_BASE}/api/automation/mode`, {
+    const resp = await fetch(`${BACKEND_BASE}/api/automation/mode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -676,6 +862,8 @@ async function setAutomationMode(mode) {
         max_runtime_mins: state.telemetry.maxRuntime
       })
     });
+
+    if (!resp.ok) throw new Error(`Backend responded ${resp.status}`);
 
     const modeLabels = { NONE: 'Manual Only', MOISTURE: 'Soil Moisture Auto', TIMER: 'Timer Schedule' };
     showToast(`Automation mode set: ${modeLabels[mode] || mode}`, 'success');
@@ -692,7 +880,12 @@ async function setAutomationMode(mode) {
     state.auditLog.unshift(newLog);
     renderAuditLog();
   } catch (err) {
-    showToast('Failed to update automation mode', 'error');
+    console.error('Automation mode update failed:', err);
+    state.pump.automationMode = 'NONE';
+    updateAutomationModeUI('NONE');
+    if (mode !== 'NONE') {
+      showToast('Automation server offline — manual control still works.', 'error');
+    }
   }
 }
 
@@ -729,23 +922,29 @@ function updateAutomationModeUI(mode) {
 }
 
 async function handleForceStop() {
-  state.pump.state = 'OFF';
-  evaluatePumpDecisionEngine();
-
   const currentDev = state.devices[state.activeDeviceIndex];
-  if (currentDev) {
-    try {
-      await fetch(`${BACKEND_BASE}/api/command`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device_id: currentDev.id, command: 'PUMP_OFF' })
-      });
-    } catch (err) {
-      console.error('Force Stop failed to reach backend:', err);
-    }
+  if (!currentDev) {
+    showToast('No device connected. Bind a node first.', 'error');
+    return;
   }
 
-  showToast('Force Stop Executed: Emergency shutdown sent to device', 'error');
+  try {
+    const resp = await fetch(`${BACKEND_BASE}/api/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: currentDev.id, command: 'PUMP_OFF' })
+    });
+    if (!resp.ok) throw new Error(`Backend responded ${resp.status}`);
+
+    state.pump.state = 'OFF';
+    state.pump.automationMode = 'NONE';
+    evaluatePumpDecisionEngine();
+    updateAutomationModeUI('NONE');
+    showToast('Force Stop Executed: Emergency shutdown sent to device', 'error');
+  } catch (err) {
+    console.error('Force Stop failed to reach backend:', err);
+    showToast('Force Stop FAILED — automation server unreachable. Use the Manual Override switch instead.', 'error');
+  }
 }
 
 function updateStartThreshold(val) {
@@ -888,18 +1087,46 @@ async function handleAddTimer() {
 }
 
 async function toggleTimerActive(id, isChecked) {
-  // Optimistically update local state
   const timer = state.timers.find(t => t.id === id);
-  if (timer) {
-    timer.active = !timer.active;
+  if (!timer) return;
+
+  const previous = timer.active;
+  timer.active = isChecked;  // optimistic
+
+  try {
+    const resp = await fetch(`${BACKEND_BASE}/api/timers/${id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.currentUser.token}`
+      },
+      body: JSON.stringify({ is_active: isChecked })
+    });
+    if (!resp.ok) throw new Error(`Backend responded ${resp.status}`);
     showToast(`Timer ${timer.time} ${timer.active ? 'Enabled' : 'Disabled'}`, 'info');
+  } catch (err) {
+    console.error('Failed to toggle timer:', err);
+    timer.active = previous;  // revert — the change did not actually persist
+    renderTimers();
+    showToast('Automation server unreachable — timer state not saved.', 'error');
   }
 }
 
-function deleteTimer(id) {
-  state.timers = state.timers.filter(t => t.id !== id);
-  renderTimers();
-  showToast('Scheduled timer deleted', 'info');
+async function deleteTimer(id) {
+  try {
+    const resp = await fetch(`${BACKEND_BASE}/api/timers/${id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${state.currentUser.token}` }
+    });
+    if (!resp.ok) throw new Error(`Backend responded ${resp.status}`);
+
+    state.timers = state.timers.filter(t => t.id !== id);
+    renderTimers();
+    showToast('Scheduled timer deleted', 'info');
+  } catch (err) {
+    console.error('Failed to delete timer:', err);
+    showToast('Automation server unreachable — timer not deleted.', 'error');
+  }
 }
 
 function renderAuditLog() {

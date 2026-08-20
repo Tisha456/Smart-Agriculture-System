@@ -1,15 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AgriSense AI — Smart Agriculture Platform</title>
   <meta name="description" content="AI-based Smart Agriculture Decision Support & IoT Controls System">
   <link rel="stylesheet" href="styles.css">
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+    rel="stylesheet" />
   <!-- Supabase JS SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
+
 <body>
 
   <!-- ═══════════════════════════════════════════════════
@@ -23,7 +26,8 @@
       <div style="text-align: center; margin-bottom: 2rem;">
         <span class="material-symbols-outlined" style="font-size: 40px; color: var(--green-primary);">sensors</span>
         <h1 style="font-size: 1.5rem; font-weight: 800; margin-top: 0.5rem;">AgriSense AI</h1>
-        <p style="font-size: 13px; color: var(--text-secondary); margin-top: 0.25rem;">Smart Agriculture Control Platform</p>
+        <p style="font-size: 13px; color: var(--text-secondary); margin-top: 0.25rem;">Smart Agriculture Control
+          Platform</p>
       </div>
 
       <!-- Tab Toggle: Login / Signup -->
@@ -57,7 +61,8 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="signupPassword">Password</label>
-          <input class="form-input" id="signupPassword" type="password" placeholder="Min. 8 characters" required minlength="8">
+          <input class="form-input" id="signupPassword" type="password" placeholder="Min. 8 characters" required
+            minlength="8">
         </div>
         <div class="form-group">
           <label class="form-label" for="signupConfirm">Confirm Password</label>
@@ -81,833 +86,921 @@
   ════════════════════════════════════════════════════ -->
   <div id="mainApp" style="display:none;">
 
-  <!-- Top Header -->
-  <header class="app-header">
-    <div class="brand-container">
-      <span class="material-symbols-outlined brand-logo-icon" style="font-size: 24px;">sensors</span>
-      <span class="brand-title">AgriSense AI</span>
-      <span class="brand-badge">v2.4</span>
-    </div>
-
-    <!-- Mobile Menu Toggle Button -->
-    <button class="mobile-menu-btn" id="mobileMenuBtn">
-      <span class="material-symbols-outlined">menu</span>
-    </button>
-
-    <!-- Navigation Tabs for 4 Pages -->
-    <nav class="nav-tabs">
-      <button class="nav-tab-btn active" data-target="view-connect">
-        <span class="material-symbols-outlined">link</span>
-        Connect
-      </button>
-      <button class="nav-tab-btn" data-target="view-dashboard">
-        <span class="material-symbols-outlined">dashboard</span>
-        Dashboard
-      </button>
-      <button class="nav-tab-btn" data-target="view-controls">
-        <span class="material-symbols-outlined">tune</span>
-        Controls & Schedules
-      </button>
-      <button class="nav-tab-btn" data-target="view-download">
-        <span class="material-symbols-outlined">get_app</span>
-        Download App
-      </button>
-    </nav>
-
-    <!-- Header Actions -->
-    <div class="header-actions">
-      <select id="headerDeviceSelect" class="device-select">
-        <option value="">No Node Connected</option>
-      </select>
-
-      <div class="status-pill">
-        <span class="pulse-dot" style="background-color: var(--text-muted);"></span>
-        <span id="wsStatusText">No Node Connected</span>
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand-container">
+        <span class="material-symbols-outlined brand-logo-icon" style="font-size: 24px;">sensors</span>
+        <span class="brand-title">AgriSense AI</span>
+        <span class="brand-badge">v2.4</span>
       </div>
 
-      <span class="material-symbols-outlined" style="color: var(--text-secondary); cursor: pointer; font-size: 22px;" title="Operator Profile" onclick="handleLogout()">logout</span>
-    </div>
-  </header>
+      <!-- Mobile Menu Toggle Button -->
+      <button class="mobile-menu-btn" id="mobileMenuBtn">
+        <span class="material-symbols-outlined">menu</span>
+      </button>
 
-  <!-- Main Content Area -->
-  <main class="main-content">
+      <!-- Navigation Tabs for 4 Pages -->
+      <nav class="nav-tabs">
+        <button class="nav-tab-btn active" data-target="view-connect">
+          <span class="material-symbols-outlined">link</span>
+          Connect
+        </button>
+        <button class="nav-tab-btn" data-target="view-dashboard">
+          <span class="material-symbols-outlined">dashboard</span>
+          Dashboard
+        </button>
+        <button class="nav-tab-btn" data-target="view-controls">
+          <span class="material-symbols-outlined">tune</span>
+          Controls & Schedules
+        </button>
+        <button class="nav-tab-btn" data-target="view-download">
+          <span class="material-symbols-outlined">get_app</span>
+          Download App
+        </button>
+      </nav>
 
-    <!-- PAGE 1: CONNECT HARDWARE -->
-    <section id="view-connect" class="view-section active">
-      
-      <!-- Top Overview Header for Connect Page -->
-      <div class="connect-overview-bar">
-        <div>
-          <h2 style="font-size: 1.15rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
-            <span class="material-symbols-outlined" style="color: var(--green-primary);">developer_board</span>
-            ESP32 Node Provisioning & Account Binding
-          </h2>
-          <p style="font-size: 12px; color: var(--text-secondary);">Manage account credentials, bind IoT field nodes, and monitor hardware link health.</p>
+      <!-- Header Actions -->
+      <div class="header-actions">
+        <select id="headerDeviceSelect" class="device-select">
+          <option value="">No Node Connected</option>
+        </select>
+
+        <div class="status-pill offline" id="headerStatusPill">
+          <span class="pulse-dot offline" id="headerPulseDot"></span>
+          <span id="wsStatusText">No Node Connected</span>
         </div>
 
-        <div class="connect-specs-grid">
-          <div class="spec-item">
-            <span class="spec-label">Account Limit</span>
-            <span class="spec-value">Max 4 Devices</span>
-          </div>
-          <div class="spec-item">
-            <span class="spec-label">Transport Protocol</span>
-            <span class="spec-value">HTTPS / WSS</span>
-          </div>
-          <div class="spec-item">
-            <span class="spec-label">Hardware Engine</span>
-            <span class="spec-value">ESP32-WROOM-32</span>
-          </div>
-        </div>
+        <span class="material-symbols-outlined" style="color: var(--text-secondary); cursor: pointer; font-size: 22px;"
+          title="Operator Profile" onclick="handleLogout()">logout</span>
       </div>
+    </header>
 
-      <div class="connect-grid">
-        
-        <!-- Left Column: Authentication & Provision Form -->
-        <div style="display: flex; flex-direction: column; gap: 1.25rem;">
-          
-          <!-- System Access Card -->
-          <div class="clean-card">
-            <h3 class="card-title">
-              <span class="material-symbols-outlined" style="color: var(--green-primary);">badge</span>
-              Operator Authentication
-            </h3>
-            <form onsubmit="event.preventDefault(); showToast('Session authenticated', 'success');">
-              <div class="form-group">
-                <label class="form-label" for="inputOpId">Operator ID</label>
-                <input class="form-input" id="inputOpId" type="text" placeholder="farmer.ramesh@agrisense.ai" value="farmer.ramesh@agrisense.ai">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="inputOpKey">Access Key</label>
-                <input class="form-input" id="inputOpKey" type="password" placeholder="••••••••" value="password123">
-              </div>
-              <button class="btn-primary" type="submit">
-                <span class="material-symbols-outlined">login</span>
-                Authenticate Session
-              </button>
-            </form>
+    <!-- Main Content Area -->
+    <main class="main-content">
+
+      <!-- PAGE 1: CONNECT HARDWARE -->
+      <section id="view-connect" class="view-section active">
+
+        <!-- Top Overview Header for Connect Page -->
+        <div class="connect-overview-bar">
+          <div>
+            <h2
+              style="font-size: 1.15rem; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+              <span class="material-symbols-outlined" style="color: var(--green-primary);">developer_board</span>
+              ESP32 Node Provisioning & Account Binding
+            </h2>
+            <p style="font-size: 12px; color: var(--text-secondary);">Manage account credentials, bind IoT field nodes,
+              and monitor hardware link health.</p>
           </div>
 
-          <!-- Deploy Node Card -->
-          <div class="clean-card">
-            <h3 class="card-title">
-              <span class="material-symbols-outlined" style="color: var(--green-primary);">add_link</span>
-              Provision New Field Node
-            </h3>
-
-            <form id="bindForm" onsubmit="event.preventDefault(); handleBindDevice();">
-              <div class="form-group">
-                <label class="form-label" for="inputDeviceId">Hardware Serial ID</label>
-                <input class="form-input mono" id="inputDeviceId" type="text" placeholder="e.g. AGS-7F3K21" required value="">
-              </div>
-
-              <div class="form-group">
-                <label class="form-label" for="inputDevicePass">Pairing Secret</label>
-                <input class="form-input" id="inputDevicePass" type="password" placeholder="Device Password (e.g. secret123)" required value="">
-              </div>
-
-              <div class="form-group">
-                <label class="form-label" for="inputDeviceName">Location Sector / Name</label>
-                <input class="form-input" id="inputDeviceName" type="text" placeholder="e.g. Sector 4 - Tomato Plot" value="">
-              </div>
-
-              <!-- 4-Device Warning Box Simulator -->
-              <div class="warning-container" id="limitWarningBox" style="display: none;">
-                <span class="material-symbols-outlined">warning</span>
-                <span>Maximum limit of 4 devices reached per account. Please unbind an existing node to connect a new one.</span>
-              </div>
-
-              <button class="btn-primary" type="submit" id="btnBindDevice" style="margin-top: 0.5rem;">
-                <span class="material-symbols-outlined">sensors</span>
-                Initialize Node Pairing
-              </button>
-            </form>
+          <div class="connect-specs-grid">
+            <div class="spec-item">
+              <span class="spec-label">Account Limit</span>
+              <span class="spec-value">Max 4 Devices</span>
+            </div>
+            <div class="spec-item">
+              <span class="spec-label">Transport Protocol</span>
+              <span class="spec-value">HTTPS / WSS</span>
+            </div>
+            <div class="spec-item">
+              <span class="spec-label">Hardware Engine</span>
+              <span class="spec-value">ESP32-WROOM-32</span>
+            </div>
           </div>
-
         </div>
 
-        <!-- Right Column: Active Telemetry Nodes & System Health -->
-        <div style="display: flex; flex-direction: column; gap: 1.25rem;">
-          
-          <div class="clean-card">
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.85rem; margin-bottom: 1rem;">
-              <h3 class="card-title" style="margin: 0;">
-                <span class="material-symbols-outlined" style="color: var(--green-primary);">hub</span>
-                Active Telemetry Nodes
+        <div class="connect-grid">
+
+          <!-- Left Column: Authentication & Provision Form -->
+          <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+
+            <!-- Session Active Card (replaces fake Operator Auth) -->
+            <div class="clean-card" style="border-color: rgba(62,207,142,0.3);">
+              <h3 class="card-title">
+                <span class="material-symbols-outlined" style="color: var(--green-primary);">verified_user</span>
+                Session Active
               </h3>
-              <span class="status-pill" id="slotsUsedBadge">0 / 4 Nodes Active</span>
-            </div>
-
-            <div class="devices-list" id="boundDevicesList">
-              <!-- Rendered by JS -->
-            </div>
-          </div>
-
-          <!-- System Link Status Summary -->
-          <div class="clean-card">
-            <h3 class="card-title">
-              <span class="material-symbols-outlined" style="color: var(--green-primary);">network_check</span>
-              Telemetry Link Health & Bandwidth
-            </h3>
-            
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; text-align: center;">
-              <div style="background: var(--bg-main); padding: 0.75rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
-                <span class="spec-label">Packet Loss</span>
-                <span style="font-size: 14px; font-weight: 700; color: var(--green-primary); display: block; font-family: var(--font-mono);">0.02%</span>
-              </div>
-
-              <div style="background: var(--bg-main); padding: 0.75rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
-                <span class="spec-label">Avg Latency</span>
-                <span style="font-size: 14px; font-weight: 700; color: var(--green-primary); display: block; font-family: var(--font-mono);">42 ms</span>
-              </div>
-
-              <div style="background: var(--bg-main); padding: 0.75rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
-                <span class="spec-label">Encryption</span>
-                <span style="font-size: 14px; font-weight: 700; color: var(--green-primary); display: block; font-family: var(--font-mono);">AES-128</span>
+              <div style="display: flex; flex-direction: column; gap: 0.85rem;">
+                <div
+                  style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: rgba(62,207,142,0.08); border-radius: 8px; border: 1px solid rgba(62,207,142,0.2);">
+                  <span class="material-symbols-outlined"
+                    style="color: var(--green-primary); font-size: 20px;">account_circle</span>
+                  <div>
+                    <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">Logged in as</p>
+                    <p id="sessionEmailDisplay"
+                      style="font-size: 13px; font-weight: 600; color: var(--text-primary); margin: 0; font-family: var(--font-mono);">
+                      —</p>
+                  </div>
+                </div>
+                <div
+                  style="display: flex; align-items: center; gap: 0.5rem; font-size: 12px; color: var(--text-secondary);">
+                  <span class="material-symbols-outlined"
+                    style="font-size: 15px; color: var(--green-primary);">check_circle</span>
+                  Authenticated via Supabase. Up to 4 ESP32 nodes can be bound to this account.
+                </div>
+                <button class="btn-secondary" onclick="handleLogout()" style="margin-top: 0.25rem; font-size: 12px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">logout</span>
+                  Sign Out
+                </button>
               </div>
             </div>
-          </div>
 
-        </div>
-
-      </div>
-    </section>
-
-    <!-- PAGE 2: TELEMETRY DASHBOARD (8 Aspect Coverage + Split Analytics) -->
-    <section id="view-dashboard" class="view-section">
-      
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-          <span class="pulse-dot"></span>
-          <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Multi-Aspect Environmental Telemetry Stream</span>
-        </div>
-        <div style="display: flex; gap: 0.35rem;">
-          <button class="btn-secondary" id="btnTempUnit" onclick="toggleTempUnit()">Unit: °C</button>
-          <button class="btn-secondary" onclick="triggerSimulatedDrySpell()">
-            <span class="material-symbols-outlined">warning</span>
-            Simulate Dry Event
-          </button>
-        </div>
-      </div>
-
-      <!-- 8-Aspect Telemetry Grid -->
-      <div class="telemetry-grid-8">
-        
-        <!-- 1. Soil Moisture Gauge -->
-        <div class="telemetry-card" style="align-items: center; text-align: center;">
-          <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase; align-self: flex-start;">1. Soil Moisture Probe</span>
-
-          <div class="gauge-svg-wrapper">
-            <svg class="gauge-svg" width="110" height="110" viewBox="0 0 36 36" style="transform: rotate(-90deg);">
-              <path class="gauge-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"></path>
-              <path class="gauge-ring-val" id="soilGaugeVal" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" stroke-dasharray="0, 100"></path>
-            </svg>
-            <div class="gauge-text-val">
-              <span id="soilValText">--</span><span style="font-size: 12px; color: var(--text-secondary);">%</span>
-            </div>
-          </div>
-
-          <div style="width: 100%; display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);">
-            <span>Target: <strong id="targetThresholdText" style="color: var(--green-primary);">70%</strong></span>
-            <span id="soilStateText" style="color: var(--text-muted); font-weight: 600;">No Connection</span>
-          </div>
-        </div>
-
-        <!-- 2. Ambient Temperature -->
-        <div class="telemetry-card">
-          <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">2. Ambient Temperature</span>
-          <div>
-            <div class="stat-value"><span id="tempValText">--</span><span class="stat-unit" id="tempUnitText">°C</span></div>
-            <div class="stat-subtitle">DHT22 Digital Probe</div>
-          </div>
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width: 0%; background: var(--amber-warning);"></div>
-          </div>
-        </div>
-
-        <!-- 3. Relative Humidity & VPD -->
-        <div class="telemetry-card">
-          <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">3. Relative Humidity & VPD</span>
-          <div>
-            <div class="stat-value"><span id="humidityValText">--</span><span class="stat-unit">% RH</span></div>
-            <div class="stat-subtitle">Vapor Pressure Deficit: -- kPa</div>
-          </div>
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width: 0%;"></div>
-          </div>
-        </div>
-
-        <!-- 4. Rainfall & Rain Sensor -->
-        <div class="telemetry-card">
-          <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">4. Rain Sensor & Forecast</span>
-          <div>
-            <span class="status-badge-flat" id="rainStateBadge" style="background: var(--bg-subtle); color: var(--text-muted); border: 1px solid var(--border-color); font-size: 10px;">NO SENSOR SIGNAL</span>
-            <div class="stat-subtitle" style="margin-top: 0.4rem;">Accumulation: 0.0mm • 24h Prob: --%</div>
-          </div>
-          <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">OpenWeather Synced</div>
-        </div>
-
-        <!-- 5. Soil Temperature (Root Zone) -->
-        <div class="telemetry-card">
-          <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">5. Root Zone Temperature</span>
-          <div>
-            <div class="stat-value">--<span class="stat-unit">°C</span></div>
-            <div class="stat-subtitle">DS18B20 Sub-Surface Probe</div>
-          </div>
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width: 0%;"></div>
-          </div>
-        </div>
-
-        <!-- 6. Solar Radiation / PAR Intensity -->
-        <div class="telemetry-card">
-          <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">6. Solar Radiation (PAR)</span>
-          <div>
-            <div class="stat-value">--<span class="stat-unit">W/m²</span></div>
-            <div class="stat-subtitle">Photosynthetic Photon Flux: --</div>
-          </div>
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width: 0%; background: var(--amber-warning);"></div>
-          </div>
-        </div>
-
-        <!-- 7. NPK Soil Nutrients -->
-        <div class="telemetry-card">
-          <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">7. NPK Soil Nutrients</span>
-          <div>
-            <div style="font-size: 13px; font-family: var(--font-mono); display: flex; justify-content: space-between; margin-bottom: 2px;">
-              <span>N: -- mg/kg</span> <span style="color: var(--text-muted);">--</span>
-            </div>
-            <div style="font-size: 13px; font-family: var(--font-mono); display: flex; justify-content: space-between; margin-bottom: 2px;">
-              <span>P: -- mg/kg</span> <span style="color: var(--text-muted);">--</span>
-            </div>
-            <div style="font-size: 13px; font-family: var(--font-mono); display: flex; justify-content: space-between;">
-              <span>K: -- mg/kg</span> <span style="color: var(--text-muted);">--</span>
-            </div>
-          </div>
-          <div class="stat-subtitle">RS485 NPK Sensor Probe</div>
-        </div>
-
-        <!-- 8. ESP32 Node Heartbeat & Signal -->
-        <div class="telemetry-card">
-          <span style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">8. ESP32 Telemetry Status</span>
-          <div>
-            <div style="font-size: 13px; font-family: var(--font-mono); color: var(--rose-danger); font-weight: 600;">Status: OFFLINE</div>
-            <div class="stat-subtitle" style="margin-top: 0.2rem;">Battery: -- • RSSI: -- dBm</div>
-            <div class="stat-subtitle">Uptime: -- • Heap: --</div>
-          </div>
-          <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Firmware v2.1.0</div>
-        </div>
-
-      </div>
-
-      <!-- Split Analytics Section: Graph on Left, 2h Rolling Numerical Panel on Right -->
-      <div class="analytics-split-layout">
-        
-        <!-- Left: Interactive Multi-Sensor Canvas Graph -->
-        <div class="clean-card">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
-            <div>
-              <h3 class="card-title" style="margin: 0;">
-                <span class="material-symbols-outlined" style="color: var(--green-primary);">insights</span>
-                Rolling 8-Hour Multi-Sensor Graph
+            <!-- Deploy Node Card -->
+            <div class="clean-card">
+              <h3 class="card-title">
+                <span class="material-symbols-outlined" style="color: var(--green-primary);">add_link</span>
+                Provision New Field Node
               </h3>
-              <p style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">2-Hour interval historical telemetry overlay across 4 rolling checkpoints.</p>
-            </div>
 
-            <!-- Series Toggles -->
-            <div style="display: flex; gap: 0.2rem; background: var(--bg-main); padding: 3px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
-              <button class="sensor-toggle-btn active" id="toggleSoilBtn" onclick="toggleSensorSeries('soil')">
-                <span class="sensor-dot" style="background: var(--green-primary);"></span> Soil
-              </button>
-              <button class="sensor-toggle-btn active" id="toggleTempBtn" onclick="toggleSensorSeries('temp')">
-                <span class="sensor-dot" style="background: var(--amber-warning);"></span> Temp
-              </button>
-              <button class="sensor-toggle-btn active" id="toggleHumidBtn" onclick="toggleSensorSeries('humid')">
-                <span class="sensor-dot" style="background: var(--blue-accent);"></span> Humid
-              </button>
-              <button class="sensor-toggle-btn active" id="toggleSolarBtn" onclick="toggleSensorSeries('solar')">
-                <span class="sensor-dot" style="background: var(--purple-accent);"></span> Solar
-              </button>
-            </div>
-          </div>
-
-          <div style="position: relative; width: 100%; height: 260px; background: var(--bg-main); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 0.75rem;">
-            <canvas id="trendCanvas" style="width: 100%; height: 100%; display: block; cursor: crosshair;"></canvas>
-            <div id="chartTooltip" class="chart-tooltip-box" style="display: none;"></div>
-          </div>
-        </div>
-
-        <!-- Right: 2-Hour Interval Numerical Data Panel (Max 4 Buffer Records: 2h, 4h, 6h, 8h) -->
-        <div class="clean-card" style="display: flex; flex-direction: column; justify-content: space-between;">
-          <div>
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.85rem;">
-              <div>
-                <h3 class="card-title" style="margin-bottom: 0.15rem;">
-                  <span class="material-symbols-outlined" style="color: var(--green-primary);">query_stats</span>
-                  Numerical Telemetry Panel
-                </h3>
-                <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Exact Sensor Data by Time Offset</span>
-              </div>
-              <span class="brand-badge" style="background: rgba(210, 153, 34, 0.15); color: var(--amber-warning); border-color: rgba(210,153,34,0.3); font-size: 10px;">
-                4-Point Buffer (Older >8h Deleted)
-              </span>
-            </div>
-
-            <!-- Time Offset Selectors -->
-            <div style="display: flex; gap: 0.35rem; margin-bottom: 1rem;">
-              <button class="interval-chip-btn active" id="btnInt0" onclick="selectTimeInterval(0)">2h Ago</button>
-              <button class="interval-chip-btn" id="btnInt1" onclick="selectTimeInterval(1)">4h Ago</button>
-              <button class="interval-chip-btn" id="btnInt2" onclick="selectTimeInterval(2)">6h Ago</button>
-              <button class="interval-chip-btn" id="btnInt3" onclick="selectTimeInterval(3)">8h Ago</button>
-            </div>
-
-            <!-- Numerical Breakdown Table Rows for Selected Interval -->
-            <div style="display: flex; flex-direction: column; gap: 0.5rem;" id="numericalSensorsContainer">
-              <!-- Rendered by JS -->
-            </div>
-          </div>
-
-          <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color); text-align: center;">
-            Auto-Pruning Engine: Buffer holds max 4 intervals (2h, 4h, 6h, 8h). Data > 8h is purged automatically.
-          </div>
-        </div>
-
-      </div>
-
-    </section>
-
-    <!-- PAGE 3: CONTROLS & AUTOMATION SYSTEM -->
-    <section id="view-controls" class="view-section">
-      <div style="margin-bottom: 1.25rem;">
-        <h2 style="font-size: 1.3rem; font-weight: 700; color: var(--text-primary);">Actuator Controls & Scheduling Engine</h2>
-        <p style="font-size: 12px; color: var(--text-secondary);">Direct relay actuator controls, scheduled timers, threshold automation, and zone valves.</p>
-      </div>
-
-      <div class="controls-grid">
-        
-        <!-- Left Column: Master Relay & Smart Automation -->
-        <div style="display: flex; flex-direction: column; gap: 1.25rem;">
-          
-          <!-- Master Relay Pump Card -->
-          <div class="pump-master-card">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
-              <div>
-                <h3 class="card-title" style="margin-bottom: 0.2rem;">
-                  <span class="material-symbols-outlined" style="color: var(--green-primary);">water_drop</span>
-                  Relay Water Pump Master Control
-                </h3>
-                <p style="font-size: 12px; color: var(--text-secondary);">High-power AC relay actuator on ESP32 GPIO16</p>
-              </div>
-              <span class="status-badge-flat off" id="controlPumpStatusBadge">PUMP OFF</span>
-            </div>
-
-            <!-- Flow Switch & Override Toggle -->
-            <div style="background: var(--bg-main); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1rem; display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
-              <div>
-                <span style="font-size: 13px; font-weight: 600; display: block;">Manual Override Relay Switch</span>
-                <span style="font-size: 11px; color: var(--text-secondary);">Direct hardware state toggling</span>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="controlPumpSwitch" onchange="handleControlPumpToggle(this.checked)">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
-            <!-- Emergency Safety Force Stop -->
-            <div class="warning-container" style="justify-content: space-between; align-items: center; margin-top: 0;">
-              <div>
-                <span style="font-weight: 600; display: block;">Emergency Safety Override</span>
-                <span style="font-size: 11px;">Immediate hardware relay cut-off</span>
-              </div>
-              <button class="btn-primary" style="background: var(--rose-danger); color: #fff; width: auto;" onclick="handleForceStop()">
-                <span class="material-symbols-outlined">power_settings_new</span>
-                FORCE STOP
-              </button>
-            </div>
-          </div>
-
-          <!-- Automation Mode Selector -->
-          <div class="clean-card">
-            <h3 class="card-title">
-              <span class="material-symbols-outlined" style="color: var(--green-primary);">smart_toy</span>
-              Pump Automation Mode
-            </h3>
-            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 1rem;">
-              Choose ONE automation mode below. The manual ON/OFF switch above always works regardless of mode.
-              Using the manual switch automatically pauses any active automation.
-            </p>
-
-            <div style="display: flex; flex-direction: column; gap: 0.6rem;" id="automationModeGroup">
-              <!-- Manual Only -->
-              <label class="automation-mode-option active" id="modeOptionNone" onclick="setAutomationMode('NONE')">
-                <div style="display: flex; align-items: center; gap: 0.65rem;">
-                  <input type="radio" name="automationMode" value="NONE" checked style="accent-color: var(--green-primary);">
-                  <div>
-                    <span style="font-size: 13px; font-weight: 600; display: block;">Manual Only</span>
-                    <span style="font-size: 11px; color: var(--text-muted);">No automation. You control the pump entirely with the switch above.</span>
-                  </div>
-                </div>
-              </label>
-
-              <!-- Moisture Auto -->
-              <label class="automation-mode-option" id="modeOptionMoisture" onclick="setAutomationMode('MOISTURE')">
-                <div style="display: flex; align-items: center; gap: 0.65rem;">
-                  <input type="radio" name="automationMode" value="MOISTURE" style="accent-color: var(--green-primary);">
-                  <div>
-                    <span style="font-size: 13px; font-weight: 600; display: block;">
-                      <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: text-bottom; color: var(--green-primary);">water_drop</span>
-                      Soil Moisture Auto
-                    </span>
-                    <span style="font-size: 11px; color: var(--text-muted);">Pump turns ON/OFF automatically based on the moisture thresholds configured below.</span>
-                  </div>
-                </div>
-              </label>
-
-              <!-- Timer Schedule -->
-              <label class="automation-mode-option" id="modeOptionTimer" onclick="setAutomationMode('TIMER')">
-                <div style="display: flex; align-items: center; gap: 0.65rem;">
-                  <input type="radio" name="automationMode" value="TIMER" style="accent-color: var(--green-primary);">
-                  <div>
-                    <span style="font-size: 13px; font-weight: 600; display: block;">
-                      <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: text-bottom; color: var(--amber-warning);">schedule</span>
-                      Timer Schedule
-                    </span>
-                    <span style="font-size: 11px; color: var(--text-muted);">Pump runs only during the scheduled times configured in the Timer panel on the right.</span>
-                  </div>
-                </div>
-              </label>
-            </div>
-
-            <!-- Active Mode Status Badge -->
-            <div style="margin-top: 0.85rem; padding: 0.5rem 0.75rem; background: var(--bg-main); border: 1px solid var(--border-color); border-radius: var(--radius-md); display: flex; justify-content: space-between; align-items: center;">
-              <span style="font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);">ACTIVE MODE:</span>
-              <span class="status-badge-flat off" id="automationModeBadge" style="font-size: 10px;">MANUAL ONLY</span>
-            </div>
-          </div>
-
-          <!-- Smart Threshold Configurator -->
-          <div class="clean-card">
-            <h3 class="card-title">
-              <span class="material-symbols-outlined" style="color: var(--green-primary);">tune</span>
-              Automated Decision Thresholds
-            </h3>
-            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 0.75rem;">
-              These thresholds are used when <strong>Soil Moisture Auto</strong> mode is active above.
-            </p>
-
-            <div style="margin-bottom: 1.25rem;">
-              <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 0.35rem;">
-                <span style="color: var(--text-secondary);">1. Target Soil Moisture Start Threshold</span>
-                <span style="color: var(--green-primary);" id="ctrlStartVal">70%</span>
-              </div>
-              <input type="range" min="10" max="80" value="70" id="ctrlStartRange" oninput="updateStartThreshold(this.value)">
-              <span style="font-size: 11px; color: var(--text-muted);">Pump turns ON automatically when moisture drops below this value</span>
-            </div>
-
-            <div style="margin-bottom: 1.25rem;">
-              <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 0.35rem;">
-                <span style="color: var(--text-secondary);">2. Soil Moisture Upper Bound Stop Threshold</span>
-                <span style="color: var(--green-primary);" id="ctrlStopVal">85%</span>
-              </div>
-              <input type="range" min="40" max="95" value="85" id="ctrlStopRange" oninput="updateStopThreshold(this.value)">
-              <span style="font-size: 11px; color: var(--text-muted);">Pump turns OFF automatically when soil moisture reaches this target</span>
-            </div>
-
-            <div>
-              <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 0.35rem;">
-                <span style="color: var(--text-secondary);">3. Max Safety Pump Runtime Limit</span>
-                <span style="color: var(--amber-warning);" id="ctrlRuntimeVal">20 mins</span>
-              </div>
-              <input type="range" min="5" max="60" value="20" id="ctrlRuntimeRange" oninput="updateMaxRuntime(this.value)">
-              <span style="font-size: 11px; color: var(--text-muted);">Safety cutoff prevents continuous pump running in case of line breach</span>
-            </div>
-          </div>
-
-          <!-- Auxiliary Actuators -->
-          <div class="clean-card">
-            <h3 class="card-title">
-              <span class="material-symbols-outlined" style="color: var(--green-primary);">toggle_on</span>
-              Auxiliary Farm Actuator Relays
-            </h3>
-            
-            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-              <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-main); padding: 0.65rem 0.85rem; border: 1px solid var(--border-color); border-radius: var(--radius-md);">
-                <div>
-                  <span style="font-size: 13px; font-weight: 600; display: block;">Zone 1 Solenoid Valve (Tomato)</span>
-                  <span style="font-size: 11px; color: var(--text-muted);">GPIO17 Actuator</span>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" checked onchange="showToast('Zone 1 Valve Toggled', 'info')">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-
-              <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-main); padding: 0.65rem 0.85rem; border: 1px solid var(--border-color); border-radius: var(--radius-md);">
-                <div>
-                  <span style="font-size: 13px; font-weight: 600; display: block;">High-Pressure Misting Foggers</span>
-                  <span style="font-size: 11px; color: var(--text-muted);">GPIO18 Humidity Control</span>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" onchange="showToast('Misting Foggers Toggled', 'info')">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-
-              <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-main); padding: 0.65rem 0.85rem; border: 1px solid var(--border-color); border-radius: var(--radius-md);">
-                <div>
-                  <span style="font-size: 13px; font-weight: 600; display: block;">Field Perimeter LED Lighting</span>
-                  <span style="font-size: 11px; color: var(--text-muted);">GPIO19 Night Work Lights</span>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" onchange="showToast('Field Lights Toggled', 'info')">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-        <!-- Right Column: Scheduled Timers Block & Add Schedule -->
-        <div style="display: flex; flex-direction: column; gap: 1.25rem;">
-          
-          <div class="clean-card">
-            <h3 class="card-title">
-              <span class="material-symbols-outlined" style="color: var(--green-primary);">schedule</span>
-              Timer-Based Irrigation Schedules
-            </h3>
-
-            <!-- Active Timers List -->
-            <div id="timersList">
-              <!-- Rendered by JS -->
-            </div>
-
-            <!-- Add New Timer Form -->
-            <div style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
-              <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 0.75rem;">Add New Timer Schedule</h4>
-              <form onsubmit="event.preventDefault(); handleAddTimer();">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem;">
-                  <div>
-                    <label class="form-label" for="timerTimeInput">Start Time</label>
-                    <input class="form-input" id="timerTimeInput" type="time" value="06:00" required>
-                  </div>
-                  <div>
-                    <label class="form-label" for="timerDurationInput">Duration (Mins)</label>
-                    <input class="form-input" id="timerDurationInput" type="number" value="15" min="1" max="120" required>
-                  </div>
+              <form id="bindForm" onsubmit="event.preventDefault(); handleBindDevice();">
+                <div class="form-group">
+                  <label class="form-label" for="inputDeviceId">Hardware Serial ID</label>
+                  <input class="form-input mono" id="inputDeviceId" type="text" placeholder="e.g. AGS-0001" required
+                    value="">
                 </div>
 
                 <div class="form-group">
-                  <label class="form-label">Active Days</label>
-                  <div style="display: flex; gap: 0.35rem;" id="timerDaysPicker">
-                    <span class="day-badge active" onclick="this.classList.toggle('active')">M</span>
-                    <span class="day-badge active" onclick="this.classList.toggle('active')">T</span>
-                    <span class="day-badge active" onclick="this.classList.toggle('active')">W</span>
-                    <span class="day-badge active" onclick="this.classList.toggle('active')">T</span>
-                    <span class="day-badge active" onclick="this.classList.toggle('active')">F</span>
-                    <span class="day-badge" onclick="this.classList.toggle('active')">S</span>
-                    <span class="day-badge" onclick="this.classList.toggle('active')">S</span>
-                  </div>
+                  <label class="form-label" for="inputDevicePairingSecret">Pairing Secret</label>
+                  <input class="form-input mono" id="inputDevicePairingSecret" type="text"
+                    placeholder="Printed on the device / set in firmware" required value="">
+                  <span style="font-size: 11px; color: var(--text-muted);">Proves this is a real
+                    AgriSense board, not a guessed serial. The board must also be powered on right
+                    now — pairing checks for a live heartbeat.</span>
                 </div>
 
-                <button class="btn-primary" type="submit">
-                  <span class="material-symbols-outlined">add_task</span>
-                  Add Scheduled Timer
+                <div class="form-group">
+                  <label class="form-label" for="inputDeviceName">Location Sector / Name</label>
+                  <input class="form-input" id="inputDeviceName" type="text" placeholder="e.g. Sector 4 - Tomato Plot"
+                    value="">
+                </div>
+
+                <!-- 4-Device Warning Box Simulator -->
+                <div class="warning-container" id="limitWarningBox" style="display: none;">
+                  <span class="material-symbols-outlined">warning</span>
+                  <span>Maximum limit of 4 devices reached per account. Please unbind an existing node to connect a new
+                    one.</span>
+                </div>
+
+                <button class="btn-primary" type="submit" id="btnBindDevice" style="margin-top: 0.5rem;">
+                  <span class="material-symbols-outlined">sensors</span>
+                  Initialize Node Pairing
                 </button>
               </form>
             </div>
+
+          </div>
+
+          <!-- Right Column: Active Telemetry Nodes & System Health -->
+          <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+
+            <div class="clean-card">
+              <div
+                style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.85rem; margin-bottom: 1rem;">
+                <h3 class="card-title" style="margin: 0;">
+                  <span class="material-symbols-outlined" style="color: var(--green-primary);">hub</span>
+                  Active Telemetry Nodes
+                </h3>
+                <span class="status-pill" id="slotsUsedBadge">0 / 4 Nodes Active</span>
+              </div>
+
+              <div class="devices-list" id="boundDevicesList">
+                <!-- Rendered by JS -->
+              </div>
+            </div>
+
+            <!-- System Link Status Summary -->
+            <div class="clean-card">
+              <h3 class="card-title">
+                <span class="material-symbols-outlined" style="color: var(--green-primary);">network_check</span>
+                Telemetry Link Health & Bandwidth
+              </h3>
+
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; text-align: center;">
+                <div
+                  style="background: var(--bg-main); padding: 0.75rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                  <span class="spec-label">Packet Loss</span>
+                  <span
+                    style="font-size: 14px; font-weight: 700; color: var(--green-primary); display: block; font-family: var(--font-mono);">0.02%</span>
+                </div>
+
+                <div
+                  style="background: var(--bg-main); padding: 0.75rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                  <span class="spec-label">Avg Latency</span>
+                  <span
+                    style="font-size: 14px; font-weight: 700; color: var(--green-primary); display: block; font-family: var(--font-mono);">42
+                    ms</span>
+                </div>
+
+                <div
+                  style="background: var(--bg-main); padding: 0.75rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                  <span class="spec-label">Encryption</span>
+                  <span
+                    style="font-size: 14px; font-weight: 700; color: var(--green-primary); display: block; font-family: var(--font-mono);">AES-128</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </section>
+
+      <!-- PAGE 2: TELEMETRY DASHBOARD (8 Aspect Coverage + Split Analytics) -->
+      <section id="view-dashboard" class="view-section">
+
+        <!-- ── Offline Banner (ESP32 has not sent a heartbeat recently) ── -->
+        <div id="offlineBanner"
+          style="display: none; align-items: center; gap: 0.75rem; padding: 0.85rem 1rem; margin-bottom: 1rem; background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.3); border-radius: 10px; font-size: 13px; color: var(--text-secondary);">
+          <span class="material-symbols-outlined"
+            style="font-size: 20px; color: var(--rose-danger);">wifi_off</span>
+          <div>
+            <strong style="color: var(--text-primary);">Device offline</strong>
+            <span style="margin-left: 0.4rem;">— this ESP32 hasn't reported in. Check it's powered on and
+              connected to Wi-Fi. Values below are frozen at zero, not live.</span>
+          </div>
+        </div>
+
+        <!-- ── No Sensor Data Banner (ESP32 online, but sensors disconnected) ── -->
+        <div id="noSensorDataBanner"
+          style="display: none; align-items: center; gap: 0.75rem; padding: 0.85rem 1rem; margin-bottom: 1rem; background: rgba(62,207,142,0.08); border: 1px solid rgba(62,207,142,0.25); border-radius: 10px; font-size: 13px; color: var(--text-secondary);">
+          <span class="material-symbols-outlined"
+            style="font-size: 20px; color: var(--green-primary); animation: pulse-opacity 2s ease-in-out infinite;">sensors_off</span>
+          <div>
+            <strong style="color: var(--text-primary);">Device online — awaiting sensor data</strong>
+            <span style="margin-left: 0.4rem;">— the ESP32 is connected and reporting in, but its sensor
+              readings are failing. Check the DHT11 and soil moisture wiring, values will populate automatically
+              once fixed.</span>
+          </div>
+        </div>
+
+        <div
+          style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <span class="pulse-dot"></span>
+            <span
+              style="font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Multi-Aspect
+              Environmental Telemetry Stream</span>
+          </div>
+          <div style="display: flex; gap: 0.35rem;">
+            <button class="btn-secondary" id="btnTempUnit" onclick="toggleTempUnit()">Unit: °C</button>
+            <button class="btn-secondary" onclick="triggerSimulatedDrySpell()">
+              <span class="material-symbols-outlined">warning</span>
+              Simulate Dry Event
+            </button>
+          </div>
+        </div>
+
+        <!-- 8-Aspect Telemetry Grid -->
+        <div class="telemetry-grid-8">
+
+          <!-- 1. Soil Moisture Gauge -->
+          <div class="telemetry-card" style="align-items: center; text-align: center;">
+            <span
+              style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase; align-self: flex-start;">1.
+              Soil Moisture Probe</span>
+
+            <div class="gauge-svg-wrapper">
+              <svg class="gauge-svg" width="110" height="110" viewBox="0 0 36 36" style="transform: rotate(-90deg);">
+                <path class="gauge-ring-bg"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"></path>
+                <path class="gauge-ring-val" id="soilGaugeVal"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  stroke-dasharray="0, 100"></path>
+              </svg>
+              <div class="gauge-text-val">
+                <span id="soilValText">--</span><span style="font-size: 12px; color: var(--text-secondary);">%</span>
+              </div>
+            </div>
+
+            <div
+              style="width: 100%; display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);">
+              <span>Target: <strong id="targetThresholdText" style="color: var(--green-primary);">70%</strong></span>
+              <span id="soilStateText" style="color: var(--text-muted); font-weight: 600;">No Connection</span>
+            </div>
+          </div>
+
+          <!-- 2. Ambient Temperature -->
+          <div class="telemetry-card">
+            <span
+              style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">2.
+              Ambient Temperature</span>
+            <div>
+              <div class="stat-value"><span id="tempValText">--</span><span class="stat-unit"
+                  id="tempUnitText">°C</span></div>
+              <div class="stat-subtitle">DHT22 Digital Probe</div>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" style="width: 0%; background: var(--amber-warning);"></div>
+            </div>
+          </div>
+
+          <!-- 3. Relative Humidity & VPD -->
+          <div class="telemetry-card">
+            <span
+              style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">3.
+              Relative Humidity & VPD</span>
+            <div>
+              <div class="stat-value"><span id="humidityValText">--</span><span class="stat-unit">% RH</span></div>
+              <div class="stat-subtitle">Vapor Pressure Deficit: -- kPa</div>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <!-- 4. Rainfall & Rain Sensor -->
+          <div class="telemetry-card">
+            <span
+              style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">4.
+              Rain Sensor & Forecast</span>
+            <div>
+              <span class="status-badge-flat" id="rainStateBadge"
+                style="background: var(--bg-subtle); color: var(--text-muted); border: 1px solid var(--border-color); font-size: 10px;">NO
+                SENSOR SIGNAL</span>
+              <div class="stat-subtitle" style="margin-top: 0.4rem;">Accumulation: 0.0mm • 24h Prob: --%</div>
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">OpenWeather Synced
+            </div>
+          </div>
+
+          <!-- 5. Soil Temperature (Root Zone) -->
+          <div class="telemetry-card">
+            <span
+              style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">5.
+              Root Zone Temperature</span>
+            <div>
+              <div class="stat-value">--<span class="stat-unit">°C</span></div>
+              <div class="stat-subtitle">DS18B20 Sub-Surface Probe</div>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <!-- 6. Solar Radiation / PAR Intensity -->
+          <div class="telemetry-card">
+            <span
+              style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">6.
+              Solar Radiation (PAR)</span>
+            <div>
+              <div class="stat-value">--<span class="stat-unit">W/m²</span></div>
+              <div class="stat-subtitle">Photosynthetic Photon Flux: --</div>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" style="width: 0%; background: var(--amber-warning);"></div>
+            </div>
+          </div>
+
+          <!-- 7. NPK Soil Nutrients -->
+          <div class="telemetry-card">
+            <span
+              style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">7.
+              NPK Soil Nutrients</span>
+            <div>
+              <div
+                style="font-size: 13px; font-family: var(--font-mono); display: flex; justify-content: space-between; margin-bottom: 2px;">
+                <span>N: -- mg/kg</span> <span style="color: var(--text-muted);">--</span>
+              </div>
+              <div
+                style="font-size: 13px; font-family: var(--font-mono); display: flex; justify-content: space-between; margin-bottom: 2px;">
+                <span>P: -- mg/kg</span> <span style="color: var(--text-muted);">--</span>
+              </div>
+              <div
+                style="font-size: 13px; font-family: var(--font-mono); display: flex; justify-content: space-between;">
+                <span>K: -- mg/kg</span> <span style="color: var(--text-muted);">--</span>
+              </div>
+            </div>
+            <div class="stat-subtitle">RS485 NPK Sensor Probe</div>
+          </div>
+
+          <!-- 8. ESP32 Node Heartbeat & Signal -->
+          <div class="telemetry-card">
+            <span
+              style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">8.
+              ESP32 Telemetry Status</span>
+            <div>
+              <div style="font-size: 13px; font-family: var(--font-mono); color: var(--rose-danger); font-weight: 600;">
+                Status: OFFLINE</div>
+              <div class="stat-subtitle" style="margin-top: 0.2rem;">Battery: -- • RSSI: -- dBm</div>
+              <div class="stat-subtitle">Uptime: -- • Heap: --</div>
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Firmware v2.1.0</div>
           </div>
 
         </div>
 
-      </div>
+        <!-- Split Analytics Section: Graph on Left, 2h Rolling Numerical Panel on Right -->
+        <div class="analytics-split-layout">
 
-      <!-- Actuator Audit Log Table -->
-      <div class="clean-card" style="overflow-x: auto;">
-        <h3 class="card-title">Actuator Operation & Trigger Audit Log</h3>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Timestamp</th>
-              <th>Actuator Unit</th>
-              <th>Trigger Source</th>
-              <th>Action</th>
-              <th>Moisture at Trigger</th>
-              <th>Duration</th>
-            </tr>
-          </thead>
-          <tbody id="auditLogTableBody">
-            <tr>
-              <td>2026-08-08 06:00 AM</td>
-              <td>Relay Pump 1</td>
-              <td><span style="color: var(--green-primary);">Timer Schedule</span></td>
-              <td>RUNNING → OFF</td>
-              <td>62%</td>
-              <td>15 mins</td>
-            </tr>
-            <tr>
-              <td>2026-08-07 06:00 PM</td>
-              <td>Relay Pump 1</td>
-              <td><span style="color: var(--amber-warning);">Smart Threshold</span></td>
-              <td>RUNNING → OFF</td>
-              <td>24%</td>
-              <td>18 mins</td>
-            </tr>
-            <tr>
-              <td>2026-08-06 02:30 PM</td>
-              <td>Relay Pump 1</td>
-              <td><span style="color: var(--text-secondary);">Manual Override</span></td>
-              <td>RUNNING → OFF</td>
-              <td>45%</td>
-              <td>10 mins</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+          <!-- Left: Interactive Multi-Sensor Canvas Graph -->
+          <div class="clean-card">
+            <div
+              style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+              <div>
+                <h3 class="card-title" style="margin: 0;">
+                  <span class="material-symbols-outlined" style="color: var(--green-primary);">insights</span>
+                  Rolling 8-Hour Multi-Sensor Graph
+                </h3>
+                <p style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">2-Hour interval historical
+                  telemetry overlay across 4 rolling checkpoints.</p>
+              </div>
 
-    <!-- PAGE 4: DOWNLOAD MOBILE APP -->
-    <section id="view-download" class="view-section">
-      
-      <!-- Antigravity Product Hero -->
-      <div class="showcase-hero">
-        <h1 class="showcase-title">Unlock On-Field AI Vision & Conversational Agronomist</h1>
-        <p class="showcase-subtitle">
-          Experience instant on-device leaf disease diagnosis powered by PyTorch EfficientNet-B4, multi-turn AI agronomy chat, and time-critical push notifications on your smartphone.
+              <!-- Series Toggles -->
+              <div
+                style="display: flex; gap: 0.2rem; background: var(--bg-main); padding: 3px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                <button class="sensor-toggle-btn active" id="toggleSoilBtn" onclick="toggleSensorSeries('soil')">
+                  <span class="sensor-dot" style="background: var(--green-primary);"></span> Soil
+                </button>
+                <button class="sensor-toggle-btn active" id="toggleTempBtn" onclick="toggleSensorSeries('temp')">
+                  <span class="sensor-dot" style="background: var(--amber-warning);"></span> Temp
+                </button>
+                <button class="sensor-toggle-btn active" id="toggleHumidBtn" onclick="toggleSensorSeries('humid')">
+                  <span class="sensor-dot" style="background: var(--blue-accent);"></span> Humid
+                </button>
+                <button class="sensor-toggle-btn active" id="toggleSolarBtn" onclick="toggleSensorSeries('solar')">
+                  <span class="sensor-dot" style="background: var(--purple-accent);"></span> Solar
+                </button>
+              </div>
+            </div>
+
+            <div
+              style="position: relative; width: 100%; height: 260px; background: var(--bg-main); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 0.75rem;">
+              <canvas id="trendCanvas" style="width: 100%; height: 100%; display: block; cursor: crosshair;"></canvas>
+              <div id="chartTooltip" class="chart-tooltip-box" style="display: none;"></div>
+            </div>
+          </div>
+
+          <!-- Right: 2-Hour Interval Numerical Data Panel (Max 4 Buffer Records: 2h, 4h, 6h, 8h) -->
+          <div class="clean-card" style="display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+              <div
+                style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.85rem;">
+                <div>
+                  <h3 class="card-title" style="margin-bottom: 0.15rem;">
+                    <span class="material-symbols-outlined" style="color: var(--green-primary);">query_stats</span>
+                    Numerical Telemetry Panel
+                  </h3>
+                  <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Exact Sensor
+                    Data by Time Offset</span>
+                </div>
+                <span class="brand-badge"
+                  style="background: rgba(210, 153, 34, 0.15); color: var(--amber-warning); border-color: rgba(210,153,34,0.3); font-size: 10px;">
+                  4-Point Buffer (Older >8h Deleted)
+                </span>
+              </div>
+
+              <!-- Time Offset Selectors -->
+              <div style="display: flex; gap: 0.35rem; margin-bottom: 1rem;">
+                <button class="interval-chip-btn active" id="btnInt0" onclick="selectTimeInterval(0)">2h Ago</button>
+                <button class="interval-chip-btn" id="btnInt1" onclick="selectTimeInterval(1)">4h Ago</button>
+                <button class="interval-chip-btn" id="btnInt2" onclick="selectTimeInterval(2)">6h Ago</button>
+                <button class="interval-chip-btn" id="btnInt3" onclick="selectTimeInterval(3)">8h Ago</button>
+              </div>
+
+              <!-- Numerical Breakdown Table Rows for Selected Interval -->
+              <div style="display: flex; flex-direction: column; gap: 0.5rem;" id="numericalSensorsContainer">
+                <!-- Rendered by JS -->
+              </div>
+            </div>
+
+            <div
+              style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border-color); text-align: center;">
+              Auto-Pruning Engine: Buffer holds max 4 intervals (2h, 4h, 6h, 8h). Data > 8h is purged automatically.
+            </div>
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- PAGE 3: CONTROLS & AUTOMATION SYSTEM -->
+      <section id="view-controls" class="view-section">
+        <div style="margin-bottom: 1.25rem;">
+          <h2 style="font-size: 1.3rem; font-weight: 700; color: var(--text-primary);">Actuator Controls & Scheduling
+            Engine</h2>
+          <p style="font-size: 12px; color: var(--text-secondary);">Direct relay actuator controls, scheduled timers,
+            threshold automation, and zone valves.</p>
+        </div>
+
+        <div class="controls-grid">
+
+          <!-- Left Column: Master Relay & Smart Automation -->
+          <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+
+            <!-- Master Relay Pump Card -->
+            <div class="pump-master-card">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+                <div>
+                  <h3 class="card-title" style="margin-bottom: 0.2rem;">
+                    <span class="material-symbols-outlined" style="color: var(--green-primary);">water_drop</span>
+                    Relay Water Pump Master Control
+                  </h3>
+                  <p style="font-size: 12px; color: var(--text-secondary);">High-power AC relay actuator on ESP32 GPIO16
+                  </p>
+                </div>
+                <span class="status-badge-flat off" id="controlPumpStatusBadge">PUMP OFF</span>
+              </div>
+
+              <!-- Flow Switch & Override Toggle -->
+              <div
+                style="background: var(--bg-main); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1rem; display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                <div>
+                  <span style="font-size: 13px; font-weight: 600; display: block;">Manual Override Relay Switch</span>
+                  <span style="font-size: 11px; color: var(--text-secondary);">Direct hardware state toggling</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="controlPumpSwitch" onchange="handleControlPumpToggle(this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <!-- Emergency Safety Force Stop -->
+              <div class="warning-container"
+                style="justify-content: space-between; align-items: center; margin-top: 0;">
+                <div>
+                  <span style="font-weight: 600; display: block;">Emergency Safety Override</span>
+                  <span style="font-size: 11px;">Immediate hardware relay cut-off</span>
+                </div>
+                <button class="btn-primary" style="background: var(--rose-danger); color: #fff; width: auto;"
+                  onclick="handleForceStop()">
+                  <span class="material-symbols-outlined">power_settings_new</span>
+                  FORCE STOP
+                </button>
+              </div>
+            </div>
+
+            <!-- Automation Mode Selector -->
+            <div class="clean-card">
+              <h3 class="card-title">
+                <span class="material-symbols-outlined" style="color: var(--green-primary);">smart_toy</span>
+                Pump Automation Mode
+              </h3>
+              <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 1rem;">
+                Choose ONE automation mode below. The manual ON/OFF switch above always works regardless of mode.
+                Using the manual switch automatically pauses any active automation.
+              </p>
+
+              <div style="display: flex; flex-direction: column; gap: 0.6rem;" id="automationModeGroup">
+                <!-- Manual Only -->
+                <label class="automation-mode-option active" id="modeOptionNone" onclick="setAutomationMode('NONE')">
+                  <div style="display: flex; align-items: center; gap: 0.65rem;">
+                    <input type="radio" name="automationMode" value="NONE" checked
+                      style="accent-color: var(--green-primary);">
+                    <div>
+                      <span style="font-size: 13px; font-weight: 600; display: block;">Manual Only</span>
+                      <span style="font-size: 11px; color: var(--text-muted);">No automation. You control the pump
+                        entirely with the switch above.</span>
+                    </div>
+                  </div>
+                </label>
+
+                <!-- Moisture Auto -->
+                <label class="automation-mode-option" id="modeOptionMoisture" onclick="setAutomationMode('MOISTURE')">
+                  <div style="display: flex; align-items: center; gap: 0.65rem;">
+                    <input type="radio" name="automationMode" value="MOISTURE"
+                      style="accent-color: var(--green-primary);">
+                    <div>
+                      <span style="font-size: 13px; font-weight: 600; display: block;">
+                        <span class="material-symbols-outlined"
+                          style="font-size: 16px; vertical-align: text-bottom; color: var(--green-primary);">water_drop</span>
+                        Soil Moisture Auto
+                      </span>
+                      <span style="font-size: 11px; color: var(--text-muted);">Pump turns ON/OFF automatically based on
+                        the moisture thresholds configured below.</span>
+                    </div>
+                  </div>
+                </label>
+
+                <!-- Timer Schedule -->
+                <label class="automation-mode-option" id="modeOptionTimer" onclick="setAutomationMode('TIMER')">
+                  <div style="display: flex; align-items: center; gap: 0.65rem;">
+                    <input type="radio" name="automationMode" value="TIMER" style="accent-color: var(--green-primary);">
+                    <div>
+                      <span style="font-size: 13px; font-weight: 600; display: block;">
+                        <span class="material-symbols-outlined"
+                          style="font-size: 16px; vertical-align: text-bottom; color: var(--amber-warning);">schedule</span>
+                        Timer Schedule
+                      </span>
+                      <span style="font-size: 11px; color: var(--text-muted);">Pump runs only during the scheduled times
+                        configured in the Timer panel on the right.</span>
+                    </div>
+                  </div>
+                </label>
+              </div>
+
+              <!-- Active Mode Status Badge -->
+              <div
+                style="margin-top: 0.85rem; padding: 0.5rem 0.75rem; background: var(--bg-main); border: 1px solid var(--border-color); border-radius: var(--radius-md); display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);">ACTIVE
+                  MODE:</span>
+                <span class="status-badge-flat off" id="automationModeBadge" style="font-size: 10px;">MANUAL ONLY</span>
+              </div>
+            </div>
+
+            <!-- Smart Threshold Configurator -->
+            <div class="clean-card">
+              <h3 class="card-title">
+                <span class="material-symbols-outlined" style="color: var(--green-primary);">tune</span>
+                Automated Decision Thresholds
+              </h3>
+              <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 0.75rem;">
+                These thresholds are used when <strong>Soil Moisture Auto</strong> mode is active above.
+              </p>
+
+              <div style="margin-bottom: 1.25rem;">
+                <div
+                  style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 0.35rem;">
+                  <span style="color: var(--text-secondary);">1. Target Soil Moisture Start Threshold</span>
+                  <span style="color: var(--green-primary);" id="ctrlStartVal">70%</span>
+                </div>
+                <input type="range" min="10" max="80" value="70" id="ctrlStartRange"
+                  oninput="updateStartThreshold(this.value)">
+                <span style="font-size: 11px; color: var(--text-muted);">Pump turns ON automatically when moisture drops
+                  below this value</span>
+              </div>
+
+              <div style="margin-bottom: 1.25rem;">
+                <div
+                  style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 0.35rem;">
+                  <span style="color: var(--text-secondary);">2. Soil Moisture Upper Bound Stop Threshold</span>
+                  <span style="color: var(--green-primary);" id="ctrlStopVal">85%</span>
+                </div>
+                <input type="range" min="40" max="95" value="85" id="ctrlStopRange"
+                  oninput="updateStopThreshold(this.value)">
+                <span style="font-size: 11px; color: var(--text-muted);">Pump turns OFF automatically when soil moisture
+                  reaches this target</span>
+              </div>
+
+              <div>
+                <div
+                  style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 0.35rem;">
+                  <span style="color: var(--text-secondary);">3. Max Safety Pump Runtime Limit</span>
+                  <span style="color: var(--amber-warning);" id="ctrlRuntimeVal">20 mins</span>
+                </div>
+                <input type="range" min="5" max="60" value="20" id="ctrlRuntimeRange"
+                  oninput="updateMaxRuntime(this.value)">
+                <span style="font-size: 11px; color: var(--text-muted);">Safety cutoff prevents continuous pump running
+                  in case of line breach</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right Column: Scheduled Timers Block & Add Schedule -->
+          <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+
+            <div class="clean-card">
+              <h3 class="card-title">
+                <span class="material-symbols-outlined" style="color: var(--green-primary);">schedule</span>
+                Timer-Based Irrigation Schedules
+              </h3>
+
+              <!-- Active Timers List -->
+              <div id="timersList">
+                <!-- Rendered by JS -->
+              </div>
+
+              <!-- Add New Timer Form -->
+              <div style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
+                <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 0.75rem;">Add New Timer Schedule</h4>
+                <form onsubmit="event.preventDefault(); handleAddTimer();">
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <div>
+                      <label class="form-label" for="timerTimeInput">Start Time</label>
+                      <input class="form-input" id="timerTimeInput" type="time" value="06:00" required>
+                    </div>
+                    <div>
+                      <label class="form-label" for="timerDurationInput">Duration (Mins)</label>
+                      <input class="form-input" id="timerDurationInput" type="number" value="15" min="1" max="120"
+                        required>
+                    </div>
+                  </div>
+
+                  <div class="form-group">
+                    <label class="form-label">Active Days</label>
+                    <div style="display: flex; gap: 0.35rem;" id="timerDaysPicker">
+                      <span class="day-badge active" onclick="this.classList.toggle('active')">M</span>
+                      <span class="day-badge active" onclick="this.classList.toggle('active')">T</span>
+                      <span class="day-badge active" onclick="this.classList.toggle('active')">W</span>
+                      <span class="day-badge active" onclick="this.classList.toggle('active')">T</span>
+                      <span class="day-badge active" onclick="this.classList.toggle('active')">F</span>
+                      <span class="day-badge" onclick="this.classList.toggle('active')">S</span>
+                      <span class="day-badge" onclick="this.classList.toggle('active')">S</span>
+                    </div>
+                  </div>
+
+                  <button class="btn-primary" type="submit">
+                    <span class="material-symbols-outlined">add_task</span>
+                    Add Scheduled Timer
+                  </button>
+                </form>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- Actuator Audit Log Table -->
+        <div class="clean-card" style="overflow-x: auto;">
+          <h3 class="card-title">Actuator Operation & Trigger Audit Log</h3>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Actuator Unit</th>
+                <th>Trigger Source</th>
+                <th>Action</th>
+                <th>Moisture at Trigger</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody id="auditLogTableBody">
+              <tr>
+                <td>2026-08-08 06:00 AM</td>
+                <td>Relay Pump 1</td>
+                <td><span style="color: var(--green-primary);">Timer Schedule</span></td>
+                <td>RUNNING → OFF</td>
+                <td>62%</td>
+                <td>15 mins</td>
+              </tr>
+              <tr>
+                <td>2026-08-07 06:00 PM</td>
+                <td>Relay Pump 1</td>
+                <td><span style="color: var(--amber-warning);">Smart Threshold</span></td>
+                <td>RUNNING → OFF</td>
+                <td>24%</td>
+                <td>18 mins</td>
+              </tr>
+              <tr>
+                <td>2026-08-06 02:30 PM</td>
+                <td>Relay Pump 1</td>
+                <td><span style="color: var(--text-secondary);">Manual Override</span></td>
+                <td>RUNNING → OFF</td>
+                <td>45%</td>
+                <td>10 mins</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- PAGE 4: DOWNLOAD MOBILE APP -->
+      <section id="view-download" class="view-section">
+
+        <!-- Antigravity Product Hero -->
+        <div class="showcase-hero">
+          <h1 class="showcase-title">Unlock On-Field AI Vision & Conversational Agronomist</h1>
+          <p class="showcase-subtitle">
+            Experience instant on-device leaf disease diagnosis powered by PyTorch EfficientNet-B4, multi-turn AI
+            agronomy chat, and time-critical push notifications on your smartphone.
+          </p>
+
+          <!-- Smartphone Mockup Frame -->
+          <div class="phone-mockup-frame">
+            <div class="phone-notch"></div>
+            <div class="phone-screen-content">
+              <div
+                style="font-size: 10px; font-family: var(--font-mono); color: var(--green-primary); font-weight: 600;">
+                EFFICIENTNET-B4 VISION</div>
+              <div
+                style="background: var(--bg-card); padding: 0.65rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                <span style="font-size: 10px; color: var(--text-secondary);">DIAGNOSIS RESULT</span>
+                <div style="font-size: 13px; font-weight: 700; color: var(--text-primary);">Tomato — Early Blight</div>
+                <div style="font-size: 11px; color: var(--green-primary); margin-top: 2px;">Confidence: 94.8% •
+                  Severity: Moderate</div>
+              </div>
+
+              <div
+                style="font-size: 10px; font-family: var(--font-mono); color: var(--blue-accent); font-weight: 600; margin-top: 0.25rem;">
+                AI CHAT ASSISTANT</div>
+              <div
+                style="background: var(--bg-subtle); padding: 0.65rem; border-radius: var(--radius-md); border: 1px solid var(--border-color); font-size: 11px; color: var(--text-primary);">
+                "Delay copper spray until rain passes in 6 hours to avoid wash-off."
+              </div>
+
+              <div
+                style="margin-top: auto; font-size: 10px; text-align: center; color: var(--text-muted); font-family: var(--font-mono);">
+                iOS & Android App Ready
+              </div>
+            </div>
+          </div>
+
+          <!-- Download CTA Buttons -->
+          <div class="download-cta-group">
+            <button class="btn-download-app primary"
+              onclick="showToast('Downloading AgriSense AI Android APK...', 'success')">
+              <span class="material-symbols-outlined">android</span>
+              Download for Android (APK)
+            </button>
+            <button class="btn-download-app" onclick="showToast('Redirecting to Apple App Store...', 'info')">
+              <span class="material-symbols-outlined">apple</span>
+              Download for iOS (App Store)
+            </button>
+          </div>
+
+          <!-- QR Code for Instant Scan -->
+          <div style="text-align: center;">
+            <div class="qr-box">
+              <svg width="100%" height="100%" viewBox="0 0 100 100" fill="#0d1117">
+                <rect x="0" y="0" width="100" height="100" fill="#ffffff" />
+                <rect x="10" y="10" width="25" height="25" fill="#0d1117" />
+                <rect x="15" y="15" width="15" height="15" fill="#ffffff" />
+                <rect x="18" y="18" width="9" height="9" fill="#0d1117" />
+
+                <rect x="65" y="10" width="25" height="25" fill="#0d1117" />
+                <rect x="70" y="15" width="15" height="15" fill="#ffffff" />
+                <rect x="73" y="18" width="9" height="9" fill="#0d1117" />
+
+                <rect x="10" y="65" width="25" height="25" fill="#0d1117" />
+                <rect x="15" y="70" width="15" height="15" fill="#ffffff" />
+                <rect x="18" y="73" width="9" height="9" fill="#0d1117" />
+
+                <rect x="42" y="10" width="8" height="8" fill="#0d1117" />
+                <rect x="42" y="30" width="8" height="8" fill="#0d1117" />
+                <rect x="65" y="45" width="8" height="8" fill="#0d1117" />
+                <rect x="50" y="60" width="12" height="12" fill="#0d1117" />
+                <rect x="70" y="75" width="15" height="15" fill="#0d1117" />
+              </svg>
+            </div>
+            <span style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted);">Scan QR Code for
+              Instant Mobile App Installation</span>
+          </div>
+        </div>
+
+        <!-- Feature Comparison Table -->
+        <div class="clean-card" style="overflow-x: auto;">
+          <h3 class="card-title">AgriSense Platform Feature Comparison Matrix</h3>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Feature Capability</th>
+                <th>Web Dashboard</th>
+                <th>Mobile Application (iOS / Android)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Account Creation & Hardware Binding</td>
+                <td><span style="color: var(--green-primary); font-weight: 600;">Available (Up to 4 Nodes)</span></td>
+                <td><span style="color: var(--green-primary); font-weight: 600;">Available (On-The-Go Scan)</span></td>
+              </tr>
+              <tr>
+                <td>Multi-Aspect Telemetry Stream (Soil, Temp, Humidity, Rain)</td>
+                <td><span style="color: var(--green-primary); font-weight: 600;">Full 8-Aspect Dashboard</span></td>
+                <td><span style="color: var(--green-primary); font-weight: 600;">Full Real-Time Telemetry</span></td>
+              </tr>
+              <tr>
+                <td>Relay Water Pump & Timer Schedules</td>
+                <td><span style="color: var(--green-primary); font-weight: 600;">Full Controls Engine</span></td>
+                <td><span style="color: var(--green-primary); font-weight: 600;">Full Controls Engine</span></td>
+              </tr>
+              <tr>
+                <td><strong>AI Crop Disease Leaf Scanner (EfficientNet)</strong></td>
+                <td><span style="color: var(--text-muted);">Exclusive to Mobile App</span></td>
+                <td><span style="color: var(--green-primary); font-weight: 700;">Full Camera Capture & Scanner</span>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Conversational AI Agronomist Chat (LLM)</strong></td>
+                <td><span style="color: var(--text-muted);">Exclusive to Mobile App</span></td>
+                <td><span style="color: var(--green-primary); font-weight: 700;">Full Conversational Assistant</span>
+                </td>
+              </tr>
+              <tr>
+                <td>Time-Critical Push Notifications</td>
+                <td><span style="color: var(--text-muted);">In-App Banners</span></td>
+                <td><span style="color: var(--green-primary); font-weight: 700;">Instant Push Alerts</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Modal Backdrop -->
+    <div class="modal-backdrop" id="modalBackdrop">
+      <div class="modal-box">
+        <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 0.5rem;" id="modalTitle">Unbind Hardware Node</h3>
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 1.25rem;" id="modalBody">
+          Are you sure you want to unbind this node from your account?
         </p>
-
-        <!-- Smartphone Mockup Frame -->
-        <div class="phone-mockup-frame">
-          <div class="phone-notch"></div>
-          <div class="phone-screen-content">
-            <div style="font-size: 10px; font-family: var(--font-mono); color: var(--green-primary); font-weight: 600;">EFFICIENTNET-B4 VISION</div>
-            <div style="background: var(--bg-card); padding: 0.65rem; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
-              <span style="font-size: 10px; color: var(--text-secondary);">DIAGNOSIS RESULT</span>
-              <div style="font-size: 13px; font-weight: 700; color: var(--text-primary);">Tomato — Early Blight</div>
-              <div style="font-size: 11px; color: var(--green-primary); margin-top: 2px;">Confidence: 94.8% • Severity: Moderate</div>
-            </div>
-
-            <div style="font-size: 10px; font-family: var(--font-mono); color: var(--blue-accent); font-weight: 600; margin-top: 0.25rem;">AI CHAT ASSISTANT</div>
-            <div style="background: var(--bg-subtle); padding: 0.65rem; border-radius: var(--radius-md); border: 1px solid var(--border-color); font-size: 11px; color: var(--text-primary);">
-              "Delay copper spray until rain passes in 6 hours to avoid wash-off."
-            </div>
-
-            <div style="margin-top: auto; font-size: 10px; text-align: center; color: var(--text-muted); font-family: var(--font-mono);">
-              iOS & Android App Ready
-            </div>
-          </div>
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+          <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary" style="background: var(--rose-danger); color: #fff; width: auto;"
+            id="modalConfirmBtn" onclick="confirmModalAction()">Confirm Action</button>
         </div>
-
-        <!-- Download CTA Buttons -->
-        <div class="download-cta-group">
-          <button class="btn-download-app primary" onclick="showToast('Downloading AgriSense AI Android APK...', 'success')">
-            <span class="material-symbols-outlined">android</span>
-            Download for Android (APK)
-          </button>
-          <button class="btn-download-app" onclick="showToast('Redirecting to Apple App Store...', 'info')">
-            <span class="material-symbols-outlined">apple</span>
-            Download for iOS (App Store)
-          </button>
-        </div>
-
-        <!-- QR Code for Instant Scan -->
-        <div style="text-align: center;">
-          <div class="qr-box">
-            <svg width="100%" height="100%" viewBox="0 0 100 100" fill="#0d1117">
-              <rect x="0" y="0" width="100" height="100" fill="#ffffff"/>
-              <rect x="10" y="10" width="25" height="25" fill="#0d1117"/>
-              <rect x="15" y="15" width="15" height="15" fill="#ffffff"/>
-              <rect x="18" y="18" width="9" height="9" fill="#0d1117"/>
-
-              <rect x="65" y="10" width="25" height="25" fill="#0d1117"/>
-              <rect x="70" y="15" width="15" height="15" fill="#ffffff"/>
-              <rect x="73" y="18" width="9" height="9" fill="#0d1117"/>
-
-              <rect x="10" y="65" width="25" height="25" fill="#0d1117"/>
-              <rect x="15" y="70" width="15" height="15" fill="#ffffff"/>
-              <rect x="18" y="73" width="9" height="9" fill="#0d1117"/>
-
-              <rect x="42" y="10" width="8" height="8" fill="#0d1117"/>
-              <rect x="42" y="30" width="8" height="8" fill="#0d1117"/>
-              <rect x="65" y="45" width="8" height="8" fill="#0d1117"/>
-              <rect x="50" y="60" width="12" height="12" fill="#0d1117"/>
-              <rect x="70" y="75" width="15" height="15" fill="#0d1117"/>
-            </svg>
-          </div>
-          <span style="font-size: 12px; font-family: var(--font-mono); color: var(--text-muted);">Scan QR Code for Instant Mobile App Installation</span>
-        </div>
-      </div>
-
-      <!-- Feature Comparison Table -->
-      <div class="clean-card" style="overflow-x: auto;">
-        <h3 class="card-title">AgriSense Platform Feature Comparison Matrix</h3>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Feature Capability</th>
-              <th>Web Dashboard</th>
-              <th>Mobile Application (iOS / Android)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Account Creation & Hardware Binding</td>
-              <td><span style="color: var(--green-primary); font-weight: 600;">Available (Up to 4 Nodes)</span></td>
-              <td><span style="color: var(--green-primary); font-weight: 600;">Available (On-The-Go Scan)</span></td>
-            </tr>
-            <tr>
-              <td>Multi-Aspect Telemetry Stream (Soil, Temp, Humidity, Rain)</td>
-              <td><span style="color: var(--green-primary); font-weight: 600;">Full 8-Aspect Dashboard</span></td>
-              <td><span style="color: var(--green-primary); font-weight: 600;">Full Real-Time Telemetry</span></td>
-            </tr>
-            <tr>
-              <td>Relay Water Pump & Timer Schedules</td>
-              <td><span style="color: var(--green-primary); font-weight: 600;">Full Controls Engine</span></td>
-              <td><span style="color: var(--green-primary); font-weight: 600;">Full Controls Engine</span></td>
-            </tr>
-            <tr>
-              <td><strong>AI Crop Disease Leaf Scanner (EfficientNet)</strong></td>
-              <td><span style="color: var(--text-muted);">Exclusive to Mobile App</span></td>
-              <td><span style="color: var(--green-primary); font-weight: 700;">Full Camera Capture & Scanner</span></td>
-            </tr>
-            <tr>
-              <td><strong>Conversational AI Agronomist Chat (LLM)</strong></td>
-              <td><span style="color: var(--text-muted);">Exclusive to Mobile App</span></td>
-              <td><span style="color: var(--green-primary); font-weight: 700;">Full Conversational Assistant</span></td>
-            </tr>
-            <tr>
-              <td>Time-Critical Push Notifications</td>
-              <td><span style="color: var(--text-muted);">In-App Banners</span></td>
-              <td><span style="color: var(--green-primary); font-weight: 700;">Instant Push Alerts</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-    </section>
-
-  </main>
-
-  <!-- Toast Container -->
-  <div class="toast-container" id="toastContainer"></div>
-
-  <!-- Modal Backdrop -->
-  <div class="modal-backdrop" id="modalBackdrop">
-    <div class="modal-box">
-      <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 0.5rem;" id="modalTitle">Unbind Hardware Node</h3>
-      <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 1.25rem;" id="modalBody">
-        Are you sure you want to unbind this node from your account?
-      </p>
-      <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
-        <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-        <button class="btn-primary" style="background: var(--rose-danger); color: #fff; width: auto;" id="modalConfirmBtn" onclick="confirmModalAction()">Confirm Action</button>
       </div>
     </div>
-  </div>
 
   </div> <!-- end #mainApp -->
 
   <script src="app.js"></script>
 </body>
+
 </html>
