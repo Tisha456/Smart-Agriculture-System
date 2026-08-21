@@ -31,6 +31,7 @@ export function PumpControl({ pumpState, commandPending, disabled, onTurnOn, onT
           onPress={onTurnOn}
           disabled={disabled || running}
           loading={commandPending && !running}
+          style={styles.rowButton}
         />
         <Button
           label="TURN OFF"
@@ -38,6 +39,7 @@ export function PumpControl({ pumpState, commandPending, disabled, onTurnOn, onT
           onPress={onTurnOff}
           disabled={disabled || !running}
           loading={commandPending && running}
+          style={styles.rowButton}
         />
       </View>
     </Card>
@@ -67,5 +69,8 @@ const styles = StyleSheet.create({
   buttonRow: {
     flexDirection: 'row',
     gap: spacing.sm,
+  },
+  rowButton: {
+    flex: 1,
   },
 });

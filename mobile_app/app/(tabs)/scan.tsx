@@ -27,8 +27,8 @@ export default function ScanScreen() {
         </Card>
 
         <View style={styles.buttonRow}>
-          <Button label="TAKE PHOTO" variant="secondary" onPress={runInference} />
-          <Button label="CHOOSE FROM LIBRARY" variant="secondary" onPress={runInference} />
+          <Button label="TAKE PHOTO" variant="secondary" onPress={runInference} style={styles.rowButton} />
+          <Button label="CHOOSE FROM LIBRARY" variant="secondary" onPress={runInference} style={styles.rowButton} />
         </View>
 
         <Card style={styles.resultCard}>
@@ -61,6 +61,7 @@ const styles = StyleSheet.create({
   previewIcon: { fontSize: 40, marginBottom: spacing.sm },
   previewHint: { color: colors.textMuted, fontSize: 12, fontFamily: fontMono },
   buttonRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.lg },
+  rowButton: { flex: 1 },
   resultCard: { alignItems: 'center', marginBottom: spacing.md, gap: spacing.md },
   resultHeading: {
     color: colors.textPrimary,

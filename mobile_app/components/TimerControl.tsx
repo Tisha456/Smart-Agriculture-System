@@ -209,8 +209,8 @@ export function TimerControl({ timers, disabled, onCreate, onUpdate, onDelete, o
             </View>
 
             <View style={styles.modalButtonRow}>
-              <Button label="CANCEL" variant="secondary" onPress={() => setFormOpen(false)} disabled={saving} />
-              <Button label={editing ? 'SAVE' : 'ADD'} variant="primary" onPress={submit} loading={saving} />
+              <Button label="CANCEL" variant="secondary" onPress={() => setFormOpen(false)} disabled={saving} style={styles.modalButton} />
+              <Button label={editing ? 'SAVE' : 'ADD'} variant="primary" onPress={submit} loading={saving} style={styles.modalButton} />
             </View>
           </View>
         </View>
@@ -308,4 +308,5 @@ const styles = StyleSheet.create({
   dayPickerText: { color: colors.textMuted, fontFamily: fontMono, fontSize: 12 },
   dayPickerTextActive: { color: colors.green, fontWeight: '700' },
   modalButtonRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
+  modalButton: { flex: 1 },
 });
