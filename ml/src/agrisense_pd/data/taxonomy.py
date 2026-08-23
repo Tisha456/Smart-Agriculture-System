@@ -41,6 +41,7 @@ CANONICAL_SPECIES = {
     "sugarcane", "citrus", "cucumber", "watermelon", "banana",
     # plantwild (seen in artifacts/inspect_plantwild.md's free-form labels)
     "cauliflower", "plum", "eggplant", "tobacco", "carrot", "broccoli",
+    "basil", "cabbage", "celery", "garlic", "ginger", "lettuce", "maple",
 }
 
 CANONICAL_CONDITIONS = {
@@ -60,6 +61,13 @@ CANONICAL_CONDITIONS = {
     "gray_mold", "yellow_rust", "botrytis_blight", "bacterial_soft_rot",
     "fire_blight", "pox_virus", "phytophthora_blight", "frogeye_leaf_spot",
     "brown_eye_spot", "leaf_spot", "cercospora_leaf_blight", "ring_spot",
+    "black_leaf_streak", "bunchy_top", "cigar_end_rot", "cordana_leaf_spot",
+    "panama_disease", "halo_blight", "blossom_end_rot", "mummy_berry",
+    "alternaria_leaf_spot", "alternaria_leaf_blight", "cavity_spot",
+    "berry_blotch", "smut", "bacterial_wilt", "phomopsis_fruit_rot",
+    "brown_rot", "leaf_curl", "pocket_disease", "sheath_blight", "blue_mold",
+    "bacterial_leaf_streak", "head_scab", "loose_smut", "septoria_blotch",
+    "stem_rust", "leafroll_disease", "tar_spot",
 }
 
 # species synonyms: normalized-token -> canonical
@@ -86,6 +94,10 @@ SPECIES_SYNONYMS = {
     "uva": "grape",
     "maca": "apple",
     "banana_": "banana",
+    # plantwild
+    "cherry_including_sour": "cherry",
+    "grapevine": "grape",
+    "zucchini": "squash",
 }
 
 # condition synonyms: normalized-token (or substring key handled specially) -> canonical
@@ -119,6 +131,24 @@ CONDITION_SYNONYMS = {
     "murcha": "wilt",
     "antracnose": "anthracnose",
     "queima_das_folhas": "leaf_blight",
+    # plantvillage — parenthetical scientific names collapse to the common name
+    "apple_scab": "scab",
+    "esca_black_measles": "esca",
+    "leaf_blight_isariopsis_leaf_spot": "leaf_blight",
+    # plantwild — same disease, different common wording than our canonical term
+    "scorch": "leaf_scorch",
+    "greening_disease": "citrus_greening",
+    "frog_eye_leaf_spot": "frogeye_leaf_spot",
+    "mosaic": "mosaic_virus",
+    "yellow_mosaic_virus": "mosaic_virus",
+    "stripe_rust": "yellow_rust",  # same disease (Puccinia striiformis), UK vs US naming
+    "bacterial_leaf_spot": "bacterial_spot",
+    "bacterial_leaf_streak_black_chaff": "bacterial_leaf_streak",
+    # rice — folder names omit the species, so condition_part becomes the
+    # WHOLE label mashed together with no separators at all (see the
+    # dataset-name species fallback in resolve_label())
+    "bacterialblight": "bacterial_blight",
+    "brownspot": "brown_spot",
 }
 
 # Portuguese -> English word-level translation, applied before synonym lookup
@@ -184,7 +214,11 @@ def _resolve_species(token: str) -> tuple[Optional[str], str]:
 
 def _resolve_condition(token: str) -> tuple[Optional[str], str]:
     token = normalize_token(token)
-    if token in ("healthy", "saudavel", "sadia"):
+    # PlantWild names its healthy-class folders "<species> leaf" (bare, no
+    # disease word) — confirmed by the "33 healthy classes" split in its
+    # documentation lining up exactly with every species having one plain
+    # "<species> leaf" entry alongside its disease-named ones.
+    if token in ("healthy", "saudavel", "sadia", "leaf"):
         return "healthy", "auto:healthy"
     if token in CANONICAL_CONDITIONS:
         return token, "auto:canonical"
@@ -226,6 +260,19 @@ def split_species_condition(raw_label: str) -> tuple[str, str]:
 def resolve_label(src_dataset: str, raw_label: str) -> dict:
     species_part, condition_part = split_species_condition(raw_label)
     species, species_src = _resolve_species(species_part)
+
+    if species is None:
+        # Single-species datasets sometimes name folders after the
+        # condition alone, omitting the species entirely since it's
+        # implicit from the dataset itself (e.g. rice's "Blast",
+        # "Bacterialblight" — no species prefix at all). Fall back to the
+        # dataset's own name as species if that resolves, treating the
+        # ENTIRE raw label as the condition in that case (there was no
+        # real species/condition split to find).
+        dataset_species, _ = _resolve_species(src_dataset)
+        if dataset_species is not None:
+            species, species_src = dataset_species, "auto:dataset_name_fallback"
+            condition_part = raw_label
 
     if not condition_part:
         # No condition segment at all (e.g. a bare species folder) — most
