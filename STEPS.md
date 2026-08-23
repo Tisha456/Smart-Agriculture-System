@@ -173,21 +173,32 @@ This downloads PlantVillage (~800 MB), Digipathos (~2 GB), and PlantDoc
 
 ✅ **Expect:** a final summary showing `OK` for all three datasets.
 
-⚠️ **Digipathos will very likely fail and print manual instructions.**
-This is expected and documented — Embrapa's site has no stable direct
-download URL. If it does:
+⚠️ **Digipathos is not a single zip file** — Embrapa serves it as ~90+
+separate zip archives, one per (crop, disorder) class, through its own
+API. Cell 5 first tries the community `digipathos` Python package to walk
+that API automatically and extract each class into its own folder.
 
-1. Read the printed message — it names the exact filename and destination.
+**If that automated path succeeds:** you'll see log lines like
+`Digipathos: N classes downloaded OK` — nothing more to do, move on.
+
+**If it fails** (the package wraps a specific, unofficial API from ~2019 —
+it may be stale if Embrapa changed their repository since):
+
+1. Read the printed message for the exact destination path.
 2. Open https://www.digipathos-rep.cnptia.embrapa.br in a normal browser tab
-3. Download the dataset archive manually
-4. Upload it to your Google Drive at exactly:
-   `MyDrive/AgriSense_PlantDisease/archives/digipathos.zip`
-5. Re-run Cell 5 — it detects the file and extracts it.
+   and browse/download whichever crop/disorder zip archives you want.
+3. Extract each one into your Google Drive at:
+   `MyDrive/AgriSense_PlantDisease/` → actually, extract locally in Colab
+   at `/content/agrisense_pd/data/raw/digipathos/<crop>___<disorder>/`
+   (use the same `Species___Condition`-style naming as PlantVillage — e.g.
+   `Coffee___Leaf_Rust`), one folder per class, images directly inside.
+4. No need to re-run Cell 5 — move straight to Cell 6.
 
-💡 **Optional shortcut:** if Digipathos proves too painful to obtain, you
-*can* proceed with PlantVillage alone. You'll get fewer species and
-narrower coverage, but the pipeline works fine. Just note it in your head
-when reading the final accuracy numbers.
+💡 **Recommended shortcut if this gets fiddly:** proceed with PlantVillage
++ PlantDoc alone. You'll get fewer species and narrower coverage, but the
+whole pipeline works unchanged. Given the automated path may be hit-or-miss
+on a 2019-era API, don't sink more than ~15-20 minutes into manual
+Digipathos wrangling before falling back to this.
 
 ---
 

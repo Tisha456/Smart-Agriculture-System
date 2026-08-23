@@ -84,8 +84,8 @@ def _download_kaggle(name: str, cfg: dict, force: bool) -> Path:
     return archive_path
 
 
-def _manual_fallback(name: str, cfg: dict) -> None:
-    archive_path = PATHS.archives / cfg["expected_archive"]
+def _manual_fallback(name: str, cfg: dict, archive_path: Path | None = None) -> None:
+    archive_path = archive_path or (PATHS.archives / cfg.get("expected_archive", f"{name}.zip"))
     print(
         f"\nAutomated download for '{name}' failed or is unsupported.\n"
         f"Please download it manually and place the file at exactly:\n"
@@ -93,6 +93,93 @@ def _manual_fallback(name: str, cfg: dict) -> None:
         f"Notes: {cfg.get('notes', '').strip()}\n"
         "Then re-run this script — it will detect the file and skip re-downloading.\n"
     )
+
+
+def _ensure_pip_package(pip_name: str) -> bool:
+    """Best-effort `pip install <pip_name>`. Returns False (never raises)
+    if it fails, so callers can fall through to manual instructions
+    instead of crashing the whole download run over one bad dependency.
+    """
+    import importlib.util
+
+    if importlib.util.find_spec(pip_name) is not None:
+        return True
+    log.info("Installing pip package '%s'...", pip_name)
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", pip_name],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        log.warning("pip install %s failed: %s", pip_name, result.stderr)
+        return False
+    return importlib.util.find_spec(pip_name) is not None
+
+
+def _download_digipathos(name: str, cfg: dict, force: bool) -> None:
+    """Digipathos is served as ~90+ separate zip archives (one per
+    (crop, disorder) class) through Embrapa's JSPUI collection API, not
+    one big archive like PlantVillage. Uses the community `digipathos`
+    PyPI package to walk that API and extracts each class's zip into a
+    PlantVillage-style '<crop>___<disorder>' folder so it merges cleanly
+    with the rest of the pipeline (see configs/sources.yaml notes).
+    """
+    dest_root = PATHS.raw_dataset(name)
+    if _already_extracted(name) and not force:
+        log.info("%s already has data, skipping.", name)
+        return
+
+    if not _ensure_pip_package("digipathos"):
+        log.warning("Could not install the 'digipathos' pip package.")
+        _manual_fallback(name, cfg, archive_path=dest_root)
+        return
+
+    try:
+        from digipathos import DataLoader
+        from digipathos.utils import download_utils
+    except ImportError as e:
+        log.warning("digipathos package installed but failed to import: %s", e)
+        _manual_fallback(name, cfg, archive_path=dest_root)
+        return
+
+    tmp_zip_dir = PATHS.local_root / "_dl_tmp" / "digipathos_zips"
+    tmp_zip_dir.mkdir(parents=True, exist_ok=True)
+    dest_root.mkdir(parents=True, exist_ok=True)
+
+    try:
+        loader = DataLoader(artifacts_path=str(tmp_zip_dir), lang="en")
+        datasets = loader.get_datasets()
+    except Exception as e:  # noqa: BLE001 - remote API, anything can go wrong
+        log.warning("Could not reach the Digipathos API: %s", e)
+        _manual_fallback(name, cfg, archive_path=dest_root)
+        return
+
+    log.info("Digipathos: found %d (crop, disorder) class archives to download.", len(datasets))
+    n_ok, n_failed = 0, 0
+    for ds in datasets:
+        try:
+            crop = ds.get_crop_name().strip().replace(" ", "_").replace("/", "_")
+            disorder = ds.get_disorder_name().strip().replace(" ", "_").replace("/", "_")
+            class_dir = dest_root / f"{crop}___{disorder}"
+            class_dir.mkdir(parents=True, exist_ok=True)
+
+            download_utils.download_dataset(ds, str(tmp_zip_dir), verbose=False)
+            zip_path = tmp_zip_dir / f"{ds.id}.{ds.extension.lower()}"
+            if zip_path.suffix.lower() == ".zip" and zip_path.exists():
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(class_dir)
+                zip_path.unlink(missing_ok=True)
+            elif zip_path.exists():
+                # Not a zip (rare) — just move the file straight into the class folder.
+                shutil.move(str(zip_path), class_dir / zip_path.name)
+            n_ok += 1
+        except Exception as e:  # noqa: BLE001 - one bad class must not abort the rest
+            log.warning("Digipathos class %s failed: %s", getattr(ds, "id", "?"), e)
+            n_failed += 1
+
+    shutil.rmtree(tmp_zip_dir, ignore_errors=True)
+    log.info("Digipathos: %d classes downloaded OK, %d failed.", n_ok, n_failed)
+    if n_ok == 0:
+        _manual_fallback(name, cfg, archive_path=dest_root)
 
 
 def _download_http(name: str, cfg: dict, force: bool) -> Path | None:
@@ -169,6 +256,8 @@ def process_dataset(name: str, cfg: dict, force: bool) -> None:
         local_archive.unlink(missing_ok=True)
     elif kind == "git":
         _download_git(name, cfg, force)
+    elif kind == "digipathos_pip":
+        _download_digipathos(name, cfg, force)
     elif kind == "manual":
         _manual_fallback(name, cfg)
     else:

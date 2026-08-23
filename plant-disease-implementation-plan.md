@@ -202,7 +202,7 @@ drive_io.mount(); config.ensure_dirs(); config.env_report()
 **Contract**
 - `sources.yaml` holds, per dataset: `kind` (`kaggle` | `http` | `git` | `manual`), locator, expected archive filename, and expected approximate size.
   - **PlantVillage** — Kaggle `mohitsingh1804/plantvillage`. Requires `kaggle.json`.
-  - **Digipathos** — Embrapa repository, accessed by DOI/landing page. Its access route is the least stable of the three: the script must attempt the configured URL and, on any failure, **fall through to manual mode** with a printed instruction naming the exact filename to drop in `Drive/archives/`. Do not let a broken URL block the phase.
+  - **Digipathos** — Embrapa repository. Not a single archive: it's ~90+ separate zip files, one per (crop, disorder) class, served through Embrapa's own collection API. The script uses the community `digipathos` PyPI package (github.com/rodrigobressan/digipathos) to walk that API and extract each class into a PlantVillage-style `<crop>___<disorder>` folder. That package wraps a specific, unofficial endpoint last updated ~2019 — its access route is the least stable of the three, and on any failure the script must **fall through to manual mode** with a printed instruction. Do not let a broken API block the phase; training on PlantVillage + PlantDoc alone is a fully supported fallback.
   - **PlantDoc** — public GitHub repo. Two variants exist: the object-detection version (images + Pascal VOC XML) and a folder-per-class classification version. **Fetch the detection version** — Phase E2 needs the boxes, and the classification split is derivable from it.
 - Order of operations per dataset: archive already in Drive → skip download → copy to `/content` → extract → verify → delete the local archive copy (not the Drive one).
 - `--only <name>` to fetch one dataset; `--force` to re-download.
@@ -572,5 +572,5 @@ Total ≈ 2–3 free-tier sessions if nothing goes wrong. The resume machinery i
 
 1. **Stage 1 base model** — spec says `yolo11s-cls`. Say so if you want `n` (faster, ~1 pt less accurate).
 2. **Deploy target** — spec assumes Cloud Run. Confirm or change.
-3. **Digipathos access route** — if the automated download fails at A2, you download it manually once and drop the archive in `Drive/archives/`. Expect this.
+3. **Digipathos access route** — if the automated pip-package download fails at A2, you download the classes you want manually from the Embrapa repository and extract them into `data/raw/digipathos/<crop>___<disorder>/` folders. Expect this to be hit-or-miss; skipping Digipathos entirely is a fully supported fallback.
 4. **Low-confidence threshold** — set after E1, since it depends on the real calibration numbers.
