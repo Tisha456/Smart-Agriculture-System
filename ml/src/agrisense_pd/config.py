@@ -155,8 +155,34 @@ def set_seeds(seed: int = SEED) -> None:
         pass
 
 
+def _drive_mount_is_sane() -> bool:
+    """True off Colab (no Drive needed for local dev/tests) or if Drive is
+    genuinely mounted at /content/drive. False means we're on Colab and
+    Drive was expected but isn't really there.
+    """
+    if not _detect_on_colab():
+        return True
+    return os.path.ismount("/content/drive")
+
+
 def ensure_dirs() -> None:
-    """Create the full Drive + local folder skeleton (idempotent)."""
+    """Create the full Drive + local folder skeleton (idempotent).
+
+    Refuses to touch the Drive-side tree if Drive isn't actually mounted
+    on Colab. Without this check, mkdir(parents=True) would happily
+    create plain local folders at the Drive path — which then makes
+    drive_io.mount()'s "already mounted" check pass forever after,
+    silently sending every archive/checkpoint to ephemeral local storage
+    instead of Drive for the rest of the runtime (this really happened —
+    see plant-disease-implementation-plan.md's troubleshooting notes).
+    Call drive_io.mount() before this, every session, no exceptions.
+    """
+    if not _drive_mount_is_sane():
+        raise RuntimeError(
+            "Drive is not mounted at /content/drive — refusing to create directories "
+            "there. Run drive_io.mount() first (Cell 2) and confirm it actually shows "
+            "a Drive authorization prompt, then re-run this."
+        )
     p = PATHS
     for d in (p.archives, p.manifests, p.drive_models, p.exported, p.artifacts, p.state):
         d.mkdir(parents=True, exist_ok=True)

@@ -23,9 +23,19 @@ def is_colab() -> bool:
 
 
 def mount() -> None:
-    """Mount Google Drive. No-op if already mounted. Hard error off Colab."""
+    """Mount Google Drive. No-op if already mounted. Hard error off Colab.
+
+    Checks os.path.ismount(), NOT just whether MyDrive/ exists as a
+    directory — a plain-directory check is a real trap: if anything ever
+    calls mkdir(parents=True) on a path under /content/drive before Drive
+    is actually mounted (e.g. config.ensure_dirs() running before this),
+    that creates ordinary local folders that look identical to a mount
+    from the outside. A directory-existence check would then report
+    "already mounted" forever after, silently sending every subsequent
+    archive/checkpoint to ephemeral local storage instead of Drive.
+    """
     mount_point = Path("/content/drive")
-    if (mount_point / "MyDrive").exists():
+    if os.path.ismount(mount_point):
         log.info("Drive already mounted.")
         return
 
@@ -38,8 +48,11 @@ def mount() -> None:
     from google.colab import drive  # type: ignore
 
     drive.mount(str(mount_point))
-    if not (mount_point / "MyDrive").exists():
-        raise RuntimeError("Drive mount reported success but MyDrive is not visible.")
+    if not os.path.ismount(mount_point):
+        raise RuntimeError(
+            "Drive mount reported success but /content/drive is not a real mount point. "
+            "Do not proceed — anything written under it will be lost when this runtime ends."
+        )
     log.info("Drive mounted at %s", mount_point)
 
 
