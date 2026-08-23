@@ -1,5 +1,6 @@
 import React from 'react';
-import { Alert, StyleSheet, Text } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
+import Feather from '@expo/vector-icons/Feather';
 import { colors, fontMono, spacing } from '../theme/tokens';
 import { Card } from './Card';
 import { Button } from './Button';
@@ -24,7 +25,10 @@ export function ForceStop({ commandPending, disabled, onForceStop }: ForceStopPr
 
   return (
     <Card style={styles.card}>
-      <Text style={styles.title}>⚠ FORCE STOP</Text>
+      <View style={styles.titleRow}>
+        <Feather name="alert-triangle" size={14} color={colors.rose} />
+        <Text style={styles.title}>FORCE STOP</Text>
+      </View>
       <Text style={styles.body}>
         Immediately stop the active pump or irrigation operation.
       </Text>
@@ -37,13 +41,18 @@ const styles = StyleSheet.create({
   card: {
     borderColor: 'rgba(248,81,73,0.35)',
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: spacing.sm,
+  },
   title: {
     color: colors.rose,
     fontSize: 13,
     fontWeight: '700',
     fontFamily: fontMono,
     letterSpacing: 0.5,
-    marginBottom: spacing.sm,
   },
   body: {
     color: colors.textSecondary,

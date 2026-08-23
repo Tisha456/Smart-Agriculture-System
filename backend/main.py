@@ -11,15 +11,18 @@ Manual pump control and device pairing work with this server stopped;
 only Moisture Auto and Timer Schedule modes require it running.
 
 Endpoints:
-  - POST   /api/command                    — manual pump ON/OFF (also used by Force Stop)
-  - POST   /api/automation/mode             — set NONE / MOISTURE / TIMER for a device
-  - GET    /api/automation/state/{id}       — read current automation config
+  - POST   /api/command                    — manual pump ON/OFF (also used by Force Stop). Auth required.
+  - POST   /api/automation/mode             — set NONE / MOISTURE / TIMER for a device. Auth required.
+  - GET    /api/automation/state/{id}       — read current automation config. Auth required.
   - GET    /api/devices                     — list devices for logged-in user (unused by website; kept for API completeness)
   - DELETE /api/devices/{id}                — unbind (unused by website; kept for API completeness)
   - POST   /api/timers, GET/{id}, DELETE/{id}, PATCH/{id} — timer schedule CRUD
   - POST   /api/plant/predict               — proxy to the plant-disease serving API
                                                (serving/app.py). Holds PLANT_API_KEY
                                                server-side so the app/website never see it.
+  - POST   /api/advisor/ask                 — proxy to Gemini, grounded in the device's
+                                               live telemetry. Holds GEMINI_API_KEY server-side.
+                                               Auth required.
 """
 
 from fastapi import FastAPI, HTTPException, Header, UploadFile, File
@@ -49,6 +52,12 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")  # service_role key —
 PLANT_API_URL = os.getenv("PLANT_API_URL")        # e.g. https://agrisense-pd-api-xxxxx.run.app
 PLANT_API_KEY = os.getenv("PLANT_API_KEY")
 
+# Gemini (farm advisor chat). Same rule — key stays server-side, app calls
+# THIS backend's /api/advisor/ask, which forwards to Gemini and never
+# returns the key to the client.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+
 # Anon client: only used to validate a user's JWT (auth.get_user). Never used
 # for table reads/writes — this server has no logged-in session, so RLS
 # policies scoped to auth.uid() would silently return zero rows.
@@ -70,6 +79,18 @@ def _parse_ts(value: str) -> datetime:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _get_user(token: str):
+    """Validate a JWT, returning the user or None. supabase-py *raises* on a
+    malformed/expired token instead of returning a falsy response, so a bare
+    `if not user_resp.user` check 500s on bad input instead of 401ing —
+    every auth call site needs this instead."""
+    try:
+        user_resp = supabase.auth.get_user(token)
+    except Exception:
+        return None
+    return user_resp.user if user_resp else None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -323,6 +344,12 @@ class AutomationModePayload(BaseModel):
     stop_threshold: Optional[int] = 85
     max_runtime_mins: Optional[int] = 20
 
+class AdvisorPayload(BaseModel):
+    """A question for the farm advisor chat, optionally about a specific device."""
+    device_id: Optional[str] = None
+    question: str
+    history: Optional[List[dict]] = None   # [{"role": "user"|"model", "text": "..."}]
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ROUTES
@@ -335,13 +362,19 @@ def root():
 
 # ── Website/App: Send a manual pump command ──────────────────────────────────
 @app.post("/api/command")
-async def send_command(payload: CommandPayload):
+async def send_command(payload: CommandPayload, authorization: str = Header(...)):
     """
     Website sends: 'Turn pump ON/OFF for device AGS-7F3K21' (manual toggle or
     Force Stop). This is a MANUAL override — it queues the command for the
     ESP32 and switches automation_mode to NONE so the Decision Engine doesn't
     fight the manual action.
     """
+    token = authorization.replace("Bearer ", "")
+    user = _get_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    _assert_owns_device(user.id, payload.device_id)
+
     if payload.command not in ("PUMP_ON", "PUMP_OFF"):
         raise HTTPException(status_code=400, detail="command must be PUMP_ON or PUMP_OFF")
 
@@ -364,11 +397,17 @@ async def send_command(payload: CommandPayload):
 
 # ── Website/App: Set automation mode ─────────────────────────────────────────
 @app.post("/api/automation/mode")
-async def set_automation_mode(payload: AutomationModePayload):
+async def set_automation_mode(payload: AutomationModePayload, authorization: str = Header(...)):
     """
     Set the pump automation mode for a device.
     Modes: "NONE" (manual only), "MOISTURE", "TIMER"
     """
+    token = authorization.replace("Bearer ", "")
+    user = _get_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    _assert_owns_device(user.id, payload.device_id)
+
     if payload.mode not in ("NONE", "MOISTURE", "TIMER"):
         raise HTTPException(status_code=400, detail="Invalid mode. Use NONE, MOISTURE, or TIMER.")
 
@@ -392,8 +431,14 @@ async def set_automation_mode(payload: AutomationModePayload):
 
 # ── Website/App: Get current automation state for a device ───────────────────
 @app.get("/api/automation/state/{device_id}")
-def get_automation_state(device_id: str):
+def get_automation_state(device_id: str, authorization: str = Header(...)):
     """Return the current automation mode and pump state from device_config."""
+    token = authorization.replace("Bearer ", "")
+    user = _get_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    _assert_owns_device(user.id, device_id)
+
     resp = supabase_admin.table("device_config").select("*").eq("device_id", device_id).limit(1).execute()
     if not resp.data:
         return {
@@ -421,11 +466,11 @@ def get_automation_state(device_id: str):
 @app.get("/api/devices")
 def get_devices(authorization: str = Header(...)):
     token = authorization.replace("Bearer ", "")
-    user_resp = supabase.auth.get_user(token)
-    if not user_resp or not user_resp.user:
+    user = _get_user(token)
+    if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    user_id = user_resp.user.id
+    user_id = user.id
     devices = supabase_admin.table("devices").select("*").eq("user_id", user_id).execute()
     return {"devices": devices.data}
 
@@ -436,14 +481,14 @@ def get_devices(authorization: str = Header(...)):
 @app.delete("/api/devices/{device_id}")
 def unbind_device(device_id: str, authorization: str = Header(...)):
     token = authorization.replace("Bearer ", "")
-    user_resp = supabase.auth.get_user(token)
-    if not user_resp or not user_resp.user:
+    user = _get_user(token)
+    if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     supabase_admin.table("devices") \
         .delete() \
         .eq("device_id", device_id) \
-        .eq("user_id", user_resp.user.id) \
+        .eq("user_id", user.id) \
         .execute()
 
     return {"status": "device unbound"}
@@ -469,11 +514,11 @@ def _device_id_for_timer(timer_id: int) -> str:
 
 @app.post("/api/timers")
 def add_timer(payload: TimerPayload):
-    user_resp = supabase.auth.get_user(payload.user_token)
-    if not user_resp or not user_resp.user:
+    user = _get_user(payload.user_token)
+    if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    _assert_owns_device(user_resp.user.id, payload.device_id)
+    _assert_owns_device(user.id, payload.device_id)
 
     supabase_admin.table("timers").insert({
         "device_id": payload.device_id,
@@ -489,11 +534,11 @@ def add_timer(payload: TimerPayload):
 @app.get("/api/timers/{device_id}")
 def get_timers(device_id: str, authorization: str = Header(...)):
     token = authorization.replace("Bearer ", "")
-    user_resp = supabase.auth.get_user(token)
-    if not user_resp or not user_resp.user:
+    user = _get_user(token)
+    if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    _assert_owns_device(user_resp.user.id, device_id)
+    _assert_owns_device(user.id, device_id)
 
     timers = supabase_admin.table("timers").select("*").eq("device_id", device_id).execute()
     return {"timers": timers.data}
@@ -504,12 +549,12 @@ def patch_timer(timer_id: int, payload: TimerPatchPayload, authorization: str = 
     """Toggle a timer's enabled state — persists what toggleTimerActive() in
     the website used to only change locally."""
     token = authorization.replace("Bearer ", "")
-    user_resp = supabase.auth.get_user(token)
-    if not user_resp or not user_resp.user:
+    user = _get_user(token)
+    if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     device_id = _device_id_for_timer(timer_id)
-    _assert_owns_device(user_resp.user.id, device_id)
+    _assert_owns_device(user.id, device_id)
 
     supabase_admin.table("timers").update({"is_active": payload.is_active}).eq("id", timer_id).execute()
     return {"status": "timer updated", "is_active": payload.is_active}
@@ -518,12 +563,12 @@ def patch_timer(timer_id: int, payload: TimerPatchPayload, authorization: str = 
 @app.delete("/api/timers/{timer_id}")
 def delete_timer(timer_id: int, authorization: str = Header(...)):
     token = authorization.replace("Bearer ", "")
-    user_resp = supabase.auth.get_user(token)
-    if not user_resp or not user_resp.user:
+    user = _get_user(token)
+    if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     device_id = _device_id_for_timer(timer_id)
-    _assert_owns_device(user_resp.user.id, device_id)
+    _assert_owns_device(user.id, device_id)
 
     supabase_admin.table("timers").delete().eq("id", timer_id).execute()
     return {"status": "timer deleted"}
@@ -558,6 +603,92 @@ async def plant_predict(file: UploadFile = File(...)):
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
     return resp.json()
+
+
+# ── Website/App: Farm advisor chat (proxy to Gemini) ──────────────────────────
+@app.post("/api/advisor/ask")
+async def advisor_ask(payload: AdvisorPayload, authorization: str = Header(...)):
+    """
+    Answer a farm question, grounded in the device's live telemetry when
+    device_id is given. The Gemini key never leaves this server — same
+    reasoning as /api/plant/predict above.
+    """
+    token = authorization.replace("Bearer ", "")
+    user = _get_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if len(payload.question) > 2000:
+        raise HTTPException(status_code=400, detail="question is too long (max 2000 chars)")
+
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Advisor is not configured on this server (GEMINI_API_KEY missing).",
+        )
+
+    context_lines = ["You are the AgriSense farm advisor. Answer briefly and practically."]
+    if payload.device_id:
+        _assert_owns_device(user.id, payload.device_id)
+
+        status_resp = supabase_admin.table("device_status") \
+            .select("*").eq("device_id", payload.device_id).limit(1).execute()
+        status = status_resp.data[0] if status_resp.data else None
+
+        telem_resp = supabase_admin.table("telemetry_data") \
+            .select("*").eq("device_id", payload.device_id).order("created_at", desc=True).limit(1).execute()
+        telemetry = telem_resp.data[0] if telem_resp.data else None
+
+        if status and status.get("last_seen_at"):
+            offline = (datetime.now(timezone.utc) - _parse_ts(status["last_seen_at"])).total_seconds() > 30
+        else:
+            offline = True
+
+        if offline or not telemetry:
+            context_lines.append("This device's sensors are currently OFFLINE — no live data available.")
+        else:
+            stale = (datetime.now(timezone.utc) - _parse_ts(telemetry["created_at"])).total_seconds() > 60
+            context_lines.append(
+                f"Live telemetry ({'STALE, ' if stale else ''}device {payload.device_id}): "
+                f"soil_moisture={telemetry.get('soil_moisture')}, "
+                f"rain_detected={telemetry.get('rain_detected')}."
+            )
+
+    contents = [
+        {"role": h["role"], "parts": [{"text": h["text"]}]}
+        for h in (payload.history or [])
+    ]
+    contents.append({"role": "user", "parts": [{"text": payload.question}]})
+
+    body = {
+        "contents": contents,
+        "systemInstruction": {"parts": [{"text": "\n".join(context_lines)}]},
+        # gemini-3.6-flash spends part of the budget on internal "thinking"
+        # tokens before the visible answer, so this needs headroom above a
+        # plain output cap or a real question can get truncated to nothing.
+        "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+                params={"key": GEMINI_API_KEY},
+                json=body,
+            )
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach Gemini: {e}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    data = resp.json()
+    candidates = data.get("candidates") or []
+    if not candidates or not candidates[0].get("content", {}).get("parts"):
+        return {"answer": "The advisor couldn't produce a response to that question — try rephrasing."}
+
+    answer = candidates[0]["content"]["parts"][0]["text"]
+    return {"answer": answer}
 
 
 # ── Mount Static Files (MUST be last — after all API routes) ─────────────────

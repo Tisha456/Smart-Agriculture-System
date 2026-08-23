@@ -1,13 +1,7 @@
 import React from 'react';
-import { Text } from 'react-native';
 import { Tabs } from 'expo-router';
+import Feather from '@expo/vector-icons/Feather';
 import { colors } from '../../theme/tokens';
-
-function TabIcon({ symbol, focused }: { symbol: string; focused: boolean }) {
-  return (
-    <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.55 }}>{symbol}</Text>
-  );
-}
 
 export default function TabsLayout() {
   return (
@@ -28,28 +22,28 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Dashboard',
-          tabBarIcon: ({ focused }) => <TabIcon symbol="⌂" focused={focused} />,
+          tabBarIcon: ({ color, size }) => <Feather name="home" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="scan"
         options={{
           title: 'Plant Scan',
-          tabBarIcon: ({ focused }) => <TabIcon symbol="🌿" focused={focused} />,
+          tabBarIcon: ({ color, size }) => <Feather name="camera" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="advisor"
         options={{
           title: 'Advisor',
-          tabBarIcon: ({ focused }) => <TabIcon symbol="💬" focused={focused} />,
+          tabBarIcon: ({ color, size }) => <Feather name="message-circle" color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="account"
         options={{
           title: 'Account',
-          tabBarIcon: ({ focused }) => <TabIcon symbol="👤" focused={focused} />,
+          tabBarIcon: ({ color, size }) => <Feather name="user" color={color} size={size} />,
         }}
       />
     </Tabs>

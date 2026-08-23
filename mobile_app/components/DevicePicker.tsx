@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import Feather from '@expo/vector-icons/Feather';
 import { colors, fontMono, radius, spacing } from '../theme/tokens';
 import type { Device } from '../lib/types';
 
@@ -26,7 +27,9 @@ export function DevicePicker({ devices, activeIndex, onSelect }: DevicePickerPro
       <Pressable style={styles.trigger} onPress={() => setOpen(true)} disabled={devices.length <= 1}>
         <Text style={styles.name}>{active.name}</Text>
         <Text style={styles.id}>{active.id}</Text>
-        {devices.length > 1 ? <Text style={styles.chevron}>▾</Text> : null}
+        {devices.length > 1 ? (
+          <Feather name="chevron-down" size={14} color={colors.textMuted} style={styles.chevron} />
+        ) : null}
       </Pressable>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
@@ -69,8 +72,6 @@ const styles = StyleSheet.create({
     fontFamily: fontMono,
   },
   chevron: {
-    color: colors.textMuted,
-    fontSize: 12,
     marginLeft: 2,
   },
   backdrop: {

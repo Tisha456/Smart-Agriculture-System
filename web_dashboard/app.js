@@ -77,7 +77,11 @@ const state = {
   presence: {
     lastSeenMs: null,
     sensorsOk: false,
-    sensorFlags: {}
+    sensorFlags: {},
+    firmwareVersion: null,
+    ipAddress: null,
+    rssi: null,
+    bootCount: null
   },
   timers: [],
   auditLog: [],
@@ -170,7 +174,10 @@ function showAuthScreen() {
     activeStatusChannel = null;
   }
   state.devices = [];
-  state.presence = { lastSeenMs: null, sensorsOk: false, sensorFlags: {} };
+  state.presence = {
+    lastSeenMs: null, sensorsOk: false, sensorFlags: {},
+    firmwareVersion: null, ipAddress: null, rssi: null, bootCount: null
+  };
 }
 
 async function onUserAuthenticated(session) {
@@ -364,7 +371,10 @@ function subscribeToDeviceRealtime(deviceId) {
 
   // Reset presence — we don't know this device's live state until either
   // the one-shot fetch below returns, or a heartbeat event arrives.
-  state.presence = { lastSeenMs: null, sensorsOk: false, sensorFlags: {} };
+  state.presence = {
+    lastSeenMs: null, sensorsOk: false, sensorFlags: {},
+    firmwareVersion: null, ipAddress: null, rssi: null, bootCount: null
+  };
   updateTelemetryUI();
   updateHeaderStatusPill();
 
@@ -372,7 +382,7 @@ function subscribeToDeviceRealtime(deviceId) {
   // reality immediately instead of showing OFFLINE until the next tick.
   supabaseClient
     .from('device_status')
-    .select('last_seen_at, sensors_ok, sensor_flags')
+    .select('last_seen_at, sensors_ok, sensor_flags, firmware_version, ip_address, rssi, boot_count')
     .eq('device_id', deviceId)
     .maybeSingle()
     .then(({ data }) => {
@@ -437,8 +447,51 @@ function applyPresenceRow(row) {
   state.presence.lastSeenMs  = row.last_seen_at ? new Date(row.last_seen_at).getTime() : Date.now();
   state.presence.sensorsOk   = !!row.sensors_ok;
   state.presence.sensorFlags = row.sensor_flags || {};
+  // Board identity/diagnostics — only ever arrive on the heartbeat, never on
+  // telemetry, so card 8 depends on device_status being reachable.
+  if (row.firmware_version !== undefined) state.presence.firmwareVersion = row.firmware_version;
+  if (row.ip_address !== undefined)       state.presence.ipAddress       = row.ip_address;
+  if (row.rssi !== undefined)             state.presence.rssi            = row.rssi;
+  if (row.boot_count !== undefined)       state.presence.bootCount       = row.boot_count;
   updateTelemetryUI();
   updateHeaderStatusPill();
+}
+
+// Card 8 ("ESP32 Telemetry Status"). Driven by the heartbeat, so it is updated
+// in EVERY connection state — including OFFLINE, where the last known RSSI and
+// firmware are still worth showing, greyed out.
+function updateNodeStatusCard() {
+  const statusEl = document.getElementById('nodeStatusText');
+  const powerEl  = document.getElementById('nodePowerSignalText');
+  const bootEl   = document.getElementById('nodeBootIpText');
+  const fwEl     = document.getElementById('nodeFirmwareText');
+  if (!statusEl) return;
+
+  const cs = connectionState();
+  const p  = state.presence;
+
+  const LABELS = {
+    NO_DEVICE:         ['Status: NO NODE',           'var(--text-muted)'],
+    OFFLINE:           ['Status: OFFLINE',           'var(--text-muted)'],
+    ONLINE_NO_SENSORS: ['Status: ONLINE — NO SENSORS', 'var(--green-primary)'],
+    LIVE:              ['Status: LIVE',              'var(--green-primary)']
+  };
+  const [label, color] = LABELS[cs];
+  statusEl.textContent = label;
+  statusEl.style.color = color;
+
+  const live = (cs === 'LIVE' || cs === 'ONLINE_NO_SENSORS');
+  const dash = (v, suffix = '') => (v === null || v === undefined ? '--' : `${v}${suffix}`);
+
+  // RSSI comes from the heartbeat; battery_pct rides on telemetry rows.
+  const rssi = live ? dash(p.rssi, ' dBm') : '-- dBm';
+  const batt = live && state.telemetry.hasData
+    ? `${Math.round(state.telemetry.battery)}%`
+    : '--';
+
+  if (powerEl) powerEl.textContent = `Battery: ${batt} • RSSI: ${rssi}`;
+  if (bootEl)  bootEl.textContent  = `Boot: ${dash(p.bootCount)} • IP: ${dash(p.ipAddress)}`;
+  if (fwEl)    fwEl.textContent    = `Firmware ${p.firmwareVersion ? 'v' + p.firmwareVersion : '--'}`;
 }
 
 // Drives the header status-pill text/color from connectionState().
@@ -719,6 +772,10 @@ function updateTelemetryUI() {
 
   const cs = connectionState();
 
+  // Card 8 is heartbeat-driven and must refresh in every state, so it is
+  // updated here — before the early returns the sensor cards take below.
+  updateNodeStatusCard();
+
   function showZeroed(colorClass, label) {
     [soilValText, tempValText].forEach(el => {
       if (!el) return;
@@ -853,7 +910,10 @@ async function setAutomationMode(mode) {
   try {
     const resp = await fetch(`${BACKEND_BASE}/api/automation/mode`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.currentUser.token}`
+      },
       body: JSON.stringify({
         device_id: currentDev.id,
         mode: mode,
@@ -931,7 +991,10 @@ async function handleForceStop() {
   try {
     const resp = await fetch(`${BACKEND_BASE}/api/command`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.currentUser.token}`
+      },
       body: JSON.stringify({ device_id: currentDev.id, command: 'PUMP_OFF' })
     });
     if (!resp.ok) throw new Error(`Backend responded ${resp.status}`);

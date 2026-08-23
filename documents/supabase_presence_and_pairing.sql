@@ -81,6 +81,28 @@ USING (
 
 ALTER PUBLICATION supabase_realtime ADD TABLE device_status;
 
+-- last_seen_at is stamped SERVER-SIDE, never by the device. Two reasons:
+--   1. The ESP32 has no NTP clock, so any timestamp it sent would be junk.
+--   2. PostgREST's resolution=merge-duplicates only writes the columns present
+--      in the payload, so an omitted last_seen_at would be set once on first
+--      INSERT and then never refreshed on later heartbeats — the row would go
+--      stale after 60 s and claim_device() would report DEVICE_OFFLINE forever.
+-- This trigger makes every heartbeat upsert refresh the timestamp regardless.
+CREATE OR REPLACE FUNCTION touch_device_status_last_seen()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.last_seen_at := NOW();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_touch_device_status_last_seen ON device_status;
+CREATE TRIGGER trg_touch_device_status_last_seen
+BEFORE INSERT OR UPDATE ON device_status
+FOR EACH ROW EXECUTE FUNCTION touch_device_status_last_seen();
+
 
 -- ============================================================================
 -- TABLE: device_config

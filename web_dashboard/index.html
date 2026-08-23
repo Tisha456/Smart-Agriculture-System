@@ -311,8 +311,7 @@
         <!-- ── Offline Banner (ESP32 has not sent a heartbeat recently) ── -->
         <div id="offlineBanner"
           style="display: none; align-items: center; gap: 0.75rem; padding: 0.85rem 1rem; margin-bottom: 1rem; background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.3); border-radius: 10px; font-size: 13px; color: var(--text-secondary);">
-          <span class="material-symbols-outlined"
-            style="font-size: 20px; color: var(--rose-danger);">wifi_off</span>
+          <span class="material-symbols-outlined" style="font-size: 20px; color: var(--rose-danger);">wifi_off</span>
           <div>
             <strong style="color: var(--text-primary);">Device offline</strong>
             <span style="margin-left: 0.4rem;">— this ESP32 hasn't reported in. Check it's powered on and
@@ -479,12 +478,15 @@
               style="font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); text-transform: uppercase;">8.
               ESP32 Telemetry Status</span>
             <div>
-              <div style="font-size: 13px; font-family: var(--font-mono); color: var(--rose-danger); font-weight: 600;">
+              <div id="nodeStatusText"
+                style="font-size: 13px; font-family: var(--font-mono); color: var(--text-muted); font-weight: 600;">
                 Status: OFFLINE</div>
-              <div class="stat-subtitle" style="margin-top: 0.2rem;">Battery: -- • RSSI: -- dBm</div>
-              <div class="stat-subtitle">Uptime: -- • Heap: --</div>
+              <div class="stat-subtitle" style="margin-top: 0.2rem;" id="nodePowerSignalText">Battery: -- • RSSI: -- dBm
+              </div>
+              <div class="stat-subtitle" id="nodeBootIpText">Boot: -- • IP: --</div>
             </div>
-            <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Firmware v2.1.0</div>
+            <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);"
+              id="nodeFirmwareText">Firmware --</div>
           </div>
 
         </div>

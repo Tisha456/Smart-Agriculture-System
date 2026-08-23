@@ -455,7 +455,10 @@ void sendTelemetry() {
 void sendHeartbeat() {
   StaticJsonDocument<300> doc;
   doc["device_id"]        = DEVICE_ID;
-  doc["last_seen_at"]     = "now()";
+  // last_seen_at is deliberately NOT sent: the board has no NTP clock, and the
+  // string "now()" is not valid timestamptz input (Postgres accepts 'now', not
+  // 'now()'), which made this whole upsert fail with HTTP 400. The
+  // touch_device_status_last_seen trigger stamps it server-side instead.
   doc["sensors_ok"]       = g_sensorsOk;
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["ip_address"]       = WiFi.localIP().toString();

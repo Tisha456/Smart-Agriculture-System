@@ -38,25 +38,30 @@ async function backendFetch(path: string, init?: RequestInit) {
 // "manual pump ON/OFF (also used by Force Stop)". It upserts device_config
 // (pump_on, automation_mode -> NONE) synchronously, so device_config is
 // always the real resulting state, which is Realtime-subscribed elsewhere.
-export async function sendPumpCommand(deviceId: string, command: PumpCommand) {
+// Auth required — the backend verifies the caller owns deviceId before
+// touching it.
+export async function sendPumpCommand(deviceId: string, command: PumpCommand, accessToken: string) {
   return backendFetch('/api/command', {
     method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({ device_id: deviceId, command }),
   });
 }
 
-export async function forceStop(deviceId: string) {
-  return sendPumpCommand(deviceId, 'PUMP_OFF');
+export async function forceStop(deviceId: string, accessToken: string) {
+  return sendPumpCommand(deviceId, 'PUMP_OFF', accessToken);
 }
 
 // ── Automation ───────────────────────────────────────────────────────────
 export async function setAutomationMode(
   deviceId: string,
   mode: AutomationMode,
-  thresholds: { startThreshold: number; stopThreshold: number; maxRuntimeMins: number }
+  thresholds: { startThreshold: number; stopThreshold: number; maxRuntimeMins: number },
+  accessToken: string
 ) {
   return backendFetch('/api/automation/mode', {
     method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({
       device_id: deviceId,
       mode,
@@ -67,8 +72,10 @@ export async function setAutomationMode(
   });
 }
 
-export async function getAutomationState(deviceId: string) {
-  return backendFetch(`/api/automation/state/${encodeURIComponent(deviceId)}`) as Promise<{
+export async function getAutomationState(deviceId: string, accessToken: string) {
+  return backendFetch(`/api/automation/state/${encodeURIComponent(deviceId)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  }) as Promise<{
     device_id: string;
     automation_mode: AutomationMode;
     pump_on: boolean;

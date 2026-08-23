@@ -85,6 +85,12 @@ export interface History {
   humid: number[];
 }
 
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+}
+
 export interface PlantDiagnosis {
   species: string;
   species_confidence: number;

@@ -47,11 +47,11 @@ export function useDeviceControls(deviceId: string | null) {
   }, [deviceId, session?.access_token]);
 
   const refreshControls = useCallback(async () => {
-    if (!deviceId) return;
+    if (!deviceId || !session?.access_token) return;
     setControlsLoading(true);
     setError(null);
     try {
-      const state = await controls.getAutomationState(deviceId);
+      const state = await controls.getAutomationState(deviceId, session.access_token);
       setPumpState(state.pump_on ? 'RUNNING' : 'OFF');
       setAutomationModeState(state.automation_mode);
       setThresholds({
@@ -65,7 +65,7 @@ export function useDeviceControls(deviceId: string | null) {
     } finally {
       setControlsLoading(false);
     }
-  }, [deviceId, refreshTimers]);
+  }, [deviceId, session?.access_token, refreshTimers]);
 
   useEffect(() => {
     setPumpState('OFF');
@@ -135,21 +135,29 @@ export function useDeviceControls(deviceId: string | null) {
   }, [commandPending, deviceId]);
 
   const turnPumpOn = useCallback(
-    () => runCommand(() => controls.sendPumpCommand(deviceId as string, 'PUMP_ON')),
-    [runCommand, deviceId]
+    () =>
+      runCommand(() =>
+        controls.sendPumpCommand(deviceId as string, 'PUMP_ON', session?.access_token as string)
+      ),
+    [runCommand, deviceId, session?.access_token]
   );
   const turnPumpOff = useCallback(
-    () => runCommand(() => controls.sendPumpCommand(deviceId as string, 'PUMP_OFF')),
-    [runCommand, deviceId]
+    () =>
+      runCommand(() =>
+        controls.sendPumpCommand(deviceId as string, 'PUMP_OFF', session?.access_token as string)
+      ),
+    [runCommand, deviceId, session?.access_token]
   );
   const forceStop = useCallback(
-    () => runCommand(() => controls.forceStop(deviceId as string)),
-    [runCommand, deviceId]
+    () => runCommand(() => controls.forceStop(deviceId as string, session?.access_token as string)),
+    [runCommand, deviceId, session?.access_token]
   );
   const setAutomationMode = useCallback(
     (mode: AutomationMode) =>
-      runCommand(() => controls.setAutomationMode(deviceId as string, mode, thresholds)),
-    [runCommand, deviceId, thresholds]
+      runCommand(() =>
+        controls.setAutomationMode(deviceId as string, mode, thresholds, session?.access_token as string)
+      ),
+    [runCommand, deviceId, thresholds, session?.access_token]
   );
 
   const createTimer = useCallback(

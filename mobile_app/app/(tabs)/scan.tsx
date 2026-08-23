@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import Feather from '@expo/vector-icons/Feather';
 import { colors, fontMono, radius, spacing } from '../../theme/tokens';
 import { Card } from '../../components/Card';
 import { Button } from '../../components/Button';
@@ -21,7 +23,16 @@ function confidenceTone(confidence: number): 'green' | 'amber' | 'rose' {
   return 'rose';
 }
 
+function summarize(result: PlantDiagnosis): string {
+  const species = formatLabel(result.species);
+  if (result.low_confidence || !result.condition) {
+    return `I scanned a ${species} plant but the diagnosis was low-confidence. What should I check next?`;
+  }
+  return `I scanned a ${species} plant and it was diagnosed with ${formatLabel(result.condition)}. What should I do about it?`;
+}
+
 export default function ScanScreen() {
+  const router = useRouter();
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PlantDiagnosis | null>(null);
@@ -78,7 +89,7 @@ export default function ScanScreen() {
             <Image source={{ uri: photoUri }} style={styles.previewImage} resizeMode="cover" />
           ) : (
             <View style={styles.previewPlaceholder}>
-              <Text style={styles.previewIcon}>🌿</Text>
+              <Feather name="image" size={40} color={colors.textMuted} style={styles.previewIcon} />
               <Text style={styles.previewHint}>No image selected</Text>
             </View>
           )}
@@ -132,6 +143,14 @@ export default function ScanScreen() {
             </View>
           )}
         </Card>
+
+        {result ? (
+          <Button
+            label="ASK ADVISOR ABOUT THIS"
+            variant="secondary"
+            onPress={() => router.push({ pathname: '/(tabs)/advisor', params: { prefill: summarize(result) } })}
+          />
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -151,7 +170,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgSubtle,
     borderRadius: radius.lg,
   },
-  previewIcon: { fontSize: 40, marginBottom: spacing.sm },
+  previewIcon: { marginBottom: spacing.sm },
   previewHint: { color: colors.textMuted, fontSize: 12, fontFamily: fontMono },
   buttonRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.lg },
   rowButton: { flex: 1 },

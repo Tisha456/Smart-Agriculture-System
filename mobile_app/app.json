@@ -10,6 +10,13 @@
     "backgroundColor": "#0d1117",
     "newArchEnabled": true,
     "plugins": ["expo-router"],
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD"
+    },
     "ios": {
       "supportsTablet": true
     },
