@@ -1,0 +1,36 @@
+# Stage 2 (per-species disease classifier) hyperparameters — Phase D2.
+model: yolo11n-cls.pt   # smaller base: per-species datasets are small
+imgsz: 224
+epochs: 30
+batch: 64
+workers: 8
+optimizer: auto
+cos_lr: true
+patience: 8
+amp: true
+cache: false
+seed: 42
+project_name: stage2
+
+hsv_h: 0.015
+hsv_s: 0.4
+hsv_v: 0.4
+degrees: 10.0
+flipud: 0.0
+fliplr: 0.5
+erasing: 0.2
+
+checkpoint_sync_every_n_epochs: 2
+
+# Phase F overrides: per-species augmentation profile + hyperparameter
+# tweaks, applied only when training with --augment-profile aggressive
+# for the named species. Keys are species names; values override the
+# defaults above for that species' Phase F retrain.
+overrides: {}
+# Example (Phase F, filled in after D2 flags a weak species):
+# overrides:
+#   corn:
+#     degrees: 30.0
+#     hsv_v: 0.6
+#     erasing: 0.35
+#     epochs: 40

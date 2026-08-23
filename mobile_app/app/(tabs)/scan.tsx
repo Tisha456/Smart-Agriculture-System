@@ -1,18 +1,72 @@
-import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { Alert, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { colors, fontMono, radius, spacing } from '../../theme/tokens';
 import { Card } from '../../components/Card';
 import { Button } from '../../components/Button';
+import { Badge } from '../../components/Badge';
 import { ComingSoon } from '../../components/ComingSoon';
+import { diagnosePlant } from '../../lib/plant';
+import type { PlantDiagnosis } from '../../lib/types';
 
-// Swap this out for the real Plant Recognition / Disease Detection model
-// call when it ships — nothing else on this screen needs to change.
-function runInference() {
-  Alert.alert('Model in training', 'Plant Scan inference is not connected yet.');
+function formatLabel(value: string | null): string {
+  if (!value) return 'Unknown';
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function confidenceTone(confidence: number): 'green' | 'amber' | 'rose' {
+  if (confidence >= 0.8) return 'green';
+  if (confidence >= 0.5) return 'amber';
+  return 'rose';
 }
 
 export default function ScanScreen() {
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<PlantDiagnosis | null>(null);
+
+  async function runDiagnosis(uri: string) {
+    setLoading(true);
+    setResult(null);
+    try {
+      const diagnosis = await diagnosePlant(uri);
+      setResult(diagnosis);
+    } catch (err: any) {
+      Alert.alert('Diagnosis failed', err?.message ?? 'Could not reach the diagnosis service.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function takePhoto() {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Camera permission needed', 'Enable camera access to scan a plant.');
+      return;
+    }
+    const picked = await ImagePicker.launchCameraAsync({ quality: 0.85, allowsEditing: true });
+    if (picked.canceled || !picked.assets?.[0]) return;
+    setPhotoUri(picked.assets[0].uri);
+    await runDiagnosis(picked.assets[0].uri);
+  }
+
+  async function chooseFromLibrary() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Photo library permission needed', 'Enable photo access to scan a plant.');
+      return;
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+      allowsEditing: true,
+    });
+    if (picked.canceled || !picked.assets?.[0]) return;
+    setPhotoUri(picked.assets[0].uri);
+    await runDiagnosis(picked.assets[0].uri);
+  }
+
   return (
     <SafeAreaView style={styles.flex} edges={['top']}>
       <ScrollView contentContainerStyle={styles.scroll}>
@@ -20,25 +74,63 @@ export default function ScanScreen() {
         <Text style={styles.subtitle}>Identify plants and detect disease from a photo.</Text>
 
         <Card style={styles.previewCard}>
-          <View style={styles.previewPlaceholder}>
-            <Text style={styles.previewIcon}>🌿</Text>
-            <Text style={styles.previewHint}>No image selected</Text>
-          </View>
+          {photoUri ? (
+            <Image source={{ uri: photoUri }} style={styles.previewImage} resizeMode="cover" />
+          ) : (
+            <View style={styles.previewPlaceholder}>
+              <Text style={styles.previewIcon}>🌿</Text>
+              <Text style={styles.previewHint}>No image selected</Text>
+            </View>
+          )}
         </Card>
 
         <View style={styles.buttonRow}>
-          <Button label="TAKE PHOTO" variant="secondary" onPress={runInference} style={styles.rowButton} />
-          <Button label="CHOOSE FROM LIBRARY" variant="secondary" onPress={runInference} style={styles.rowButton} />
+          <Button label="TAKE PHOTO" variant="secondary" onPress={takePhoto} loading={loading} style={styles.rowButton} />
+          <Button
+            label="CHOOSE FROM LIBRARY"
+            variant="secondary"
+            onPress={chooseFromLibrary}
+            loading={loading}
+            style={styles.rowButton}
+          />
         </View>
 
         <Card style={styles.resultCard}>
           <Text style={styles.resultHeading}>Plant Identification</Text>
-          <ComingSoon label="MODEL IN TRAINING" />
+          {!result ? (
+            <ComingSoon label={loading ? 'ANALYZING...' : 'TAKE OR CHOOSE A PHOTO'} />
+          ) : (
+            <View style={styles.resultRow}>
+              <Text style={styles.resultValue}>{formatLabel(result.species)}</Text>
+              <Badge
+                label={`${Math.round(result.species_confidence * 100)}%`}
+                tone={confidenceTone(result.species_confidence)}
+              />
+            </View>
+          )}
         </Card>
 
         <Card style={styles.resultCard}>
           <Text style={styles.resultHeading}>Disease Analysis</Text>
-          <ComingSoon label="MODEL IN TRAINING" />
+          {!result ? (
+            <ComingSoon label={loading ? 'ANALYZING...' : 'TAKE OR CHOOSE A PHOTO'} />
+          ) : result.low_confidence ? (
+            <View style={styles.lowConfidenceBox}>
+              <Badge label="UNCLEAR PHOTO" tone="amber" />
+              <Text style={styles.lowConfidenceHint}>
+                We're not confident enough in this result to show a diagnosis. Try a closer, well-lit
+                photo of a single leaf.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.resultRow}>
+              <Text style={styles.resultValue}>{formatLabel(result.condition)}</Text>
+              <Badge
+                label={`${Math.round(result.condition_confidence * 100)}%`}
+                tone={confidenceTone(result.condition_confidence)}
+              />
+            </View>
+          )}
         </Card>
       </ScrollView>
     </SafeAreaView>
@@ -51,6 +143,7 @@ const styles = StyleSheet.create({
   title: { color: colors.textPrimary, fontSize: 22, fontWeight: '800' },
   subtitle: { color: colors.textSecondary, fontSize: 12, marginTop: spacing.xs, marginBottom: spacing.lg },
   previewCard: { marginBottom: spacing.md, padding: 0, overflow: 'hidden' },
+  previewImage: { height: 220, width: '100%', borderRadius: radius.lg },
   previewPlaceholder: {
     height: 220,
     alignItems: 'center',
@@ -62,7 +155,7 @@ const styles = StyleSheet.create({
   previewHint: { color: colors.textMuted, fontSize: 12, fontFamily: fontMono },
   buttonRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.lg },
   rowButton: { flex: 1 },
-  resultCard: { alignItems: 'center', marginBottom: spacing.md, gap: spacing.md },
+  resultCard: { alignItems: 'stretch', marginBottom: spacing.md, gap: spacing.md },
   resultHeading: {
     color: colors.textPrimary,
     fontSize: 13,
@@ -71,4 +164,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     marginBottom: spacing.sm,
   },
+  resultRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  resultValue: { color: colors.textPrimary, fontSize: 16, fontWeight: '700' },
+  lowConfidenceBox: { alignItems: 'center', gap: spacing.sm },
+  lowConfidenceHint: { color: colors.textMuted, fontSize: 12, textAlign: 'center', lineHeight: 18 },
 });

@@ -1,0 +1,24 @@
+# Hand-edited overrides for Phase B1 (taxonomy.py).
+#
+# Populate this AFTER running:
+#   python -m agrisense_pd.data.taxonomy --build
+# and reading the "review" list it prints (labels the automatic
+# normalizer + synonym table could not confidently resolve).
+#
+# Format: one entry per raw source label that needs a manual decision.
+# src_dataset must be "plantvillage", "digipathos", or "plantdoc".
+# species/condition must be snake_case (see plant-disease-implementation-plan.md
+# section 2 "Naming"). Overrides always win over automatic rules.
+#
+# Example (delete once you have real entries):
+# overrides:
+#   - src_dataset: digipathos
+#     src_label: "Milho_Mancha_Foliar_Cercospora"
+#     species: maize
+#     condition: gray_leaf_spot
+#   - src_dataset: plantvillage
+#     src_label: "Pepper,_bell___Bacterial_spot"
+#     species: bell_pepper
+#     condition: bacterial_spot
+
+overrides: []

@@ -9,6 +9,12 @@ __pycache__/
 *$py.class
 .venv/
 venv/
+.pytest_cache/
+
+# ML: exported model weights (ONNX) — downloaded from Drive after Colab
+# training (plant-disease-implementation-plan.md Phase G), not committed.
+serving/models/
+ml/notebooks/.ipynb_checkpoints/
 
 # Build artifacts & Android App Bundles / Packages
 *.aab

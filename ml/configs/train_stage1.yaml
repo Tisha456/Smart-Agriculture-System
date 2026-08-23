@@ -1,0 +1,26 @@
+# Stage 1 (species classifier) hyperparameters — Phase D1.
+model: yolo11s-cls.pt
+imgsz: 224
+epochs: 30
+batch: 128            # drop to 64 if CUDA OOM on a T4
+workers: 8
+optimizer: auto
+cos_lr: true
+patience: 10
+amp: true
+cache: false          # symlink tree on local SSD is already fast; caching
+                       # ~100k images in RAM risks OOM on Colab's free tier
+seed: 42
+project_name: stage1
+run_name: species
+
+# Augmentation (ultralytics classification defaults, tuned slightly):
+hsv_h: 0.015
+hsv_s: 0.4
+hsv_v: 0.4
+degrees: 10.0
+flipud: 0.0            # leaves have a natural up/down orientation
+fliplr: 0.5
+erasing: 0.2
+
+checkpoint_sync_every_n_epochs: 2

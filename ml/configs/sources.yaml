@@ -1,0 +1,41 @@
+# Dataset acquisition sources for Phase A2.
+# kind: kaggle | http | git | manual
+# "manual" datasets/fallbacks require you to download the file yourself and
+# drop it in <drive_root>/archives/<expected_archive> — download.py will tell
+# you this explicitly if the automated path fails.
+
+plantvillage:
+  kind: kaggle
+  slug: "mohitsingh1804/plantvillage"
+  expected_archive: "plantvillage.zip"
+  approx_size_mb: 800
+  notes: >
+    Requires kaggle.json in ~/.kaggle/. Folder convention inside is
+    "Species___Condition".
+
+digipathos:
+  kind: http
+  # Embrapa's Digipathos digital library does not expose a single stable
+  # direct-download URL — the DOI landing page requires manual navigation.
+  # This URL is a best-effort attempt; download.py falls through to manual
+  # mode on any failure. This is expected, not a bug.
+  url: "https://www.digipathos-rep.cnptia.embrapa.br/jspui/bitstream/123456789/download"
+  doi_landing_page: "https://www.digipathos-rep.cnptia.embrapa.br"
+  expected_archive: "digipathos.zip"
+  approx_size_mb: 2000
+  notes: >
+    If automated fetch fails, visit the DOI landing page, download the
+    dataset archive manually, and place it at
+    <drive_root>/archives/digipathos.zip. Labels are in Portuguese —
+    handled by taxonomy.py's synonym table.
+
+plantdoc:
+  kind: git
+  # Use the object-detection variant (images + Pascal VOC XML), not the
+  # classification-folder variant — Phase E2 needs the bounding boxes.
+  repo_url: "https://github.com/pratikkayal/PlantDoc-Object-Detection-Dataset.git"
+  expected_archive: "plantdoc"  # cloned directory, not a zip
+  approx_size_mb: 1700
+  notes: >
+    Cloned directly (git kind). Contains train/ and test/ folders with
+    images and matching Pascal VOC .xml annotation files.

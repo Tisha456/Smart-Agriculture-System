@@ -17,9 +17,12 @@ Endpoints:
   - GET    /api/devices                     — list devices for logged-in user (unused by website; kept for API completeness)
   - DELETE /api/devices/{id}                — unbind (unused by website; kept for API completeness)
   - POST   /api/timers, GET/{id}, DELETE/{id}, PATCH/{id} — timer schedule CRUD
+  - POST   /api/plant/predict               — proxy to the plant-disease serving API
+                                               (serving/app.py). Holds PLANT_API_KEY
+                                               server-side so the app/website never see it.
 """
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -31,12 +34,20 @@ from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 import os
 import asyncio
+import httpx
 
 # ── Load Environment Variables ──────────────────────────────────────────────
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")  # service_role key — bypasses RLS
+
+# Plant-disease serving API (serving/app.py, deployed per serving/DEPLOY.md).
+# PLANT_API_KEY must only ever live here, server-side — see
+# plant-disease-implementation-plan.md Phase J: the mobile app and website
+# call THIS backend's /api/plant/predict instead, which holds the real key.
+PLANT_API_URL = os.getenv("PLANT_API_URL")        # e.g. https://agrisense-pd-api-xxxxx.run.app
+PLANT_API_KEY = os.getenv("PLANT_API_KEY")
 
 # Anon client: only used to validate a user's JWT (auth.get_user). Never used
 # for table reads/writes — this server has no logged-in session, so RLS
@@ -516,6 +527,37 @@ def delete_timer(timer_id: int, authorization: str = Header(...)):
 
     supabase_admin.table("timers").delete().eq("id", timer_id).execute()
     return {"status": "timer deleted"}
+
+
+# ── Website/App: Plant disease diagnosis (proxy) ──────────────────────────────
+@app.post("/api/plant/predict")
+async def plant_predict(file: UploadFile = File(...)):
+    """
+    Proxy an uploaded photo to the plant-disease serving API and return its
+    JSON diagnosis unchanged. This is the ONLY thing the app/website call for
+    "upload photo -> get diagnosis" — the plant API's X-API-Key never leaves
+    this server (see plant-disease-implementation-plan.md Phase J).
+    """
+    if not PLANT_API_URL or not PLANT_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Plant diagnosis is not configured on this server (PLANT_API_URL/PLANT_API_KEY missing).",
+        )
+
+    contents = await file.read()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{PLANT_API_URL}/predict",
+                headers={"X-API-Key": PLANT_API_KEY},
+                files={"file": (file.filename, contents, file.content_type)},
+            )
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach plant diagnosis API: {e}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
 
 
 # ── Mount Static Files (MUST be last — after all API routes) ─────────────────

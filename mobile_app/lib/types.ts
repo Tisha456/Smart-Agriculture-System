@@ -85,6 +85,17 @@ export interface History {
   humid: number[];
 }
 
+export interface PlantDiagnosis {
+  species: string;
+  species_confidence: number;
+  condition: string | null;
+  condition_confidence: number;
+  joint_confidence: number;
+  low_confidence: boolean;
+  model_version: string;
+  inference_ms: number;
+}
+
 export const ALL_DAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'] as const;
 
 export const CLAIM_ERROR_MESSAGES: Record<string, string> = {

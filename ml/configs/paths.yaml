@@ -1,0 +1,31 @@
+# AgriSense Plant Disease — path configuration
+# Every path used anywhere in the pipeline is derived from the two roots below.
+# See plant-disease-implementation-plan.md section 1.1 for why Drive vs local
+# are split this way: Drive is cold/durable storage, /content is the fast
+# working disk that gets wiped every Colab session and fully rebuilt from Drive.
+
+drive_root: "/content/drive/MyDrive/AgriSense_PlantDisease"
+local_root: "/content/agrisense_pd"
+
+# Sub-paths are relative to the roots above. Keys ending in _dir are directories.
+drive:
+  archives_dir: "archives"
+  manifests_dir: "manifests"
+  models_dir: "models"
+  exported_dir: "exported"
+  artifacts_dir: "artifacts"
+  state_dir: "state"
+
+local:
+  raw_dir: "data/raw"
+  clean_dir: "data/clean"
+  stage1_dir: "data/stage1_species"
+  stage2_dir: "data/stage2_disease"
+  runs_dir: "runs"
+
+datasets:
+  - plantvillage
+  - digipathos
+  - plantdoc
+
+seed: 42
