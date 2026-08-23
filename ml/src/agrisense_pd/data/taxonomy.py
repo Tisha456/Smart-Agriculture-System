@@ -39,6 +39,8 @@ CANONICAL_SPECIES = {
     "bell_pepper", "potato", "raspberry", "soybean", "squash", "strawberry",
     "tomato", "coffee", "bean", "cassava", "cotton", "wheat", "rice",
     "sugarcane", "citrus", "cucumber", "watermelon", "banana",
+    # plantwild (seen in artifacts/inspect_plantwild.md's free-form labels)
+    "cauliflower", "plum", "eggplant", "tobacco", "carrot", "broccoli",
 }
 
 CANONICAL_CONDITIONS = {
@@ -54,6 +56,10 @@ CANONICAL_CONDITIONS = {
     "brown_streak_disease", "green_mottle", "mosaic_disease",
     # rice (Kaggle nirmalsankalana/rice-leaf-disease-image)
     "blast", "tungro", "leaf_scald", "hispa",
+    # plantwild (seen in artifacts/inspect_plantwild.md's free-form labels)
+    "gray_mold", "yellow_rust", "botrytis_blight", "bacterial_soft_rot",
+    "fire_blight", "pox_virus", "phytophthora_blight", "frogeye_leaf_spot",
+    "brown_eye_spot", "leaf_spot", "cercospora_leaf_blight", "ring_spot",
 }
 
 # species synonyms: normalized-token -> canonical
