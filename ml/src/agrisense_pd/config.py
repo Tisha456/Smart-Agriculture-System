@@ -125,7 +125,16 @@ def get_paths() -> Paths:
 PATHS = get_paths()
 _RAW_CFG = load_raw()
 SEED: int = _RAW_CFG.get("seed", 42)
-DATASETS = _RAW_CFG.get("datasets", ["plantvillage", "digipathos", "plantdoc"])
+
+# TRAINING_DATASETS feed the taxonomy/manifest/training pipeline.
+# EVAL_DATASETS (PlantDoc) are real-world test-only and must never be
+# merged into training — see plant-disease-implementation-plan.md
+# section "E1". DATASETS is the union, used only for folder bookkeeping
+# (ensure_dirs) and CLI --only choices; nothing merges across the two
+# groups implicitly.
+TRAINING_DATASETS: list[str] = _RAW_CFG.get("training_datasets", ["plantvillage"])
+EVAL_DATASETS: list[str] = _RAW_CFG.get("eval_datasets", ["plantdoc"])
+DATASETS: list[str] = sorted(set(TRAINING_DATASETS) | set(EVAL_DATASETS))
 
 
 def set_seeds(seed: int = SEED) -> None:

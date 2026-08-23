@@ -23,9 +23,22 @@ local:
   stage2_dir: "data/stage2_disease"
   runs_dir: "runs"
 
-datasets:
+# Datasets actually used for training (Stage 1 + Stage 2 taxonomy/manifest
+# pipeline). Add a new dataset here (and to sources.yaml) and it flows
+# through download/inspect/taxonomy/clean/manifest automatically — nothing
+# else hardcodes dataset names. Digipathos is deliberately excluded:
+# Embrapa's server refuses connections (confirmed ECONNREFUSED), so every
+# downloader for it is dead. See sources.yaml's digipathos entry.
+training_datasets:
   - plantvillage
-  - digipathos
+  - plantwild
+  - cassava
+  - rice
+
+# Test-only datasets — real-world images used for Phase E evaluation,
+# NEVER merged into training (that would make the E1 "real-world accuracy"
+# number meaningless).
+eval_datasets:
   - plantdoc
 
 seed: 42

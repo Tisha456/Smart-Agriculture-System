@@ -1,11 +1,16 @@
-"""Phase A2 — acquire the three raw datasets.
+"""Phase A2 — acquire the raw datasets listed in configs/sources.yaml.
 
 Order per dataset: archive already in Drive archives/ -> skip download ->
 copy to /content -> extract -> verify -> delete the LOCAL archive copy
 (never the Drive one, so re-running never re-downloads).
 
+Which datasets are fetched by default is config.DATASETS (the union of
+paths.yaml's training_datasets + eval_datasets) — adding a dataset means
+adding an entry to sources.yaml and to one of those two lists, not
+touching this file.
+
 Usage:
-    python -m agrisense_pd.data.download                 # all three
+    python -m agrisense_pd.data.download                 # everything in config.DATASETS
     python -m agrisense_pd.data.download --only plantdoc  # just one
     python -m agrisense_pd.data.download --force          # re-download all
 """
@@ -182,6 +187,69 @@ def _download_digipathos(name: str, cfg: dict, force: bool) -> None:
         _manual_fallback(name, cfg, archive_path=dest_root)
 
 
+def _download_huggingface(name: str, cfg: dict, force: bool) -> None:
+    """Downloads one or more files from a HuggingFace dataset repo via
+    huggingface_hub, extracting any .zip files found. No Kaggle/Embrapa
+    dependency — used for plantwild (see configs/sources.yaml).
+    """
+    dest_root = PATHS.raw_dataset(name)
+    if _already_extracted(name) and not force:
+        log.info("%s already has data, skipping.", name)
+        return
+
+    if not _ensure_pip_package("huggingface_hub"):
+        log.warning("Could not install huggingface_hub.")
+        _manual_fallback(name, cfg, archive_path=dest_root)
+        return
+
+    from huggingface_hub import hf_hub_download
+
+    dest_root.mkdir(parents=True, exist_ok=True)
+    files = cfg.get("hf_files", [])
+    n_ok = 0
+    for filename in files:
+        drive_cached = PATHS.archives / filename
+        try:
+            if drive_cached.exists() and not force:
+                local_path = drive_cached
+                log.info("%s: %s already in Drive, skipping HF download.", name, filename)
+            else:
+                log.info("Downloading %s from HuggingFace dataset %s ...", filename, cfg["repo_id"])
+                downloaded = hf_hub_download(
+                    repo_id=cfg["repo_id"], repo_type=cfg.get("repo_type", "dataset"),
+                    filename=filename,
+                )
+                local_path = drive_io.push_archive(Path(downloaded), name=filename)
+
+            if local_path.suffix.lower() == ".zip":
+                local = drive_io.pull_archive(local_path.name)
+                with zipfile.ZipFile(local, "r") as zf:
+                    zf.extractall(dest_root)
+                local.unlink(missing_ok=True)
+            else:
+                shutil.copy2(local_path, dest_root / local_path.name)
+            n_ok += 1
+        except Exception as e:  # noqa: BLE001 - one bad file must not abort the rest
+            log.warning("HuggingFace file %s failed: %s", filename, e)
+
+    log.info("%s: %d/%d files downloaded and extracted.", name, n_ok, len(files))
+    if n_ok == 0:
+        _manual_fallback(name, cfg, archive_path=dest_root)
+
+
+def _skip_unavailable(name: str, cfg: dict) -> None:
+    """For sources.yaml entries marked kind: unavailable — a confirmed-dead
+    source (see digipathos's entry) that is intentionally not attempted,
+    rather than failing loudly every run. Not an error.
+    """
+    log.info(
+        "%s is marked unavailable in sources.yaml and is skipped automatically. "
+        "See its 'notes' field for why and how to retry manually if you want.",
+        name,
+    )
+    print(f"\n'{name}' is a known-unavailable source — skipped automatically (this is expected, not an error).")
+
+
 def _download_http(name: str, cfg: dict, force: bool) -> Path | None:
     archive_path = PATHS.archives / cfg["expected_archive"]
     if archive_path.exists() and not force:
@@ -258,6 +326,11 @@ def process_dataset(name: str, cfg: dict, force: bool) -> None:
         _download_git(name, cfg, force)
     elif kind == "digipathos_pip":
         _download_digipathos(name, cfg, force)
+    elif kind == "huggingface":
+        _download_huggingface(name, cfg, force)
+    elif kind == "unavailable":
+        _skip_unavailable(name, cfg)
+        return  # don't attempt the tmp-dir cleanup below either; nothing was created
     elif kind == "manual":
         _manual_fallback(name, cfg)
     else:
@@ -269,13 +342,21 @@ def process_dataset(name: str, cfg: dict, force: bool) -> None:
 
 
 def main() -> None:
+    sources = _load_sources()
     parser = argparse.ArgumentParser(description="Phase A2: download raw datasets.")
-    parser.add_argument("--only", choices=["plantvillage", "digipathos", "plantdoc"], default=None)
+    parser.add_argument("--only", choices=list(sources.keys()), default=None,
+                         help="Fetch only this one dataset (default: everything in configs/paths.yaml).")
     parser.add_argument("--force", action="store_true", help="Re-download even if already present.")
     args = parser.parse_args()
 
-    sources = _load_sources()
-    names = [args.only] if args.only else list(sources.keys())
+    from ..config import DATASETS
+
+    if args.only:
+        names = [args.only]
+    else:
+        # sources.yaml may list entries (like digipathos) not in DATASETS —
+        # only fetch what paths.yaml's training/eval lists actually want.
+        names = [n for n in DATASETS if n in sources]
 
     for name in names:
         cfg = sources[name]
@@ -284,6 +365,10 @@ def main() -> None:
 
     print("\nSummary:")
     for name in names:
+        cfg = sources[name]
+        if cfg.get("kind") == "unavailable":
+            print(f"  {name}: SKIPPED (known unavailable, see sources.yaml)")
+            continue
         d = PATHS.raw_dataset(name)
         n = sum(1 for _ in d.rglob("*")) if d.exists() else 0
         print(f"  {name}: {'OK' if _already_extracted(name) else 'MISSING'} ({n} files under {d})")

@@ -1,6 +1,6 @@
-"""Phase B1 — unify PlantVillage + Digipathos (+ PlantDoc, for eval-time
-label matching in Phase E) class names into one (species, condition)
-taxonomy.
+"""Phase B1 — unify every training dataset's (config.TRAINING_DATASETS)
+class names, plus PlantDoc's for eval-time label matching in Phase E, into
+one (species, condition) taxonomy.
 
 Design (see plant-disease-implementation-plan.md section "B1"):
   - Normalize: strip accents -> lowercase -> collapse separators -> snake_case.
@@ -24,7 +24,7 @@ from typing import Optional
 
 import yaml
 
-from ..config import CONFIGS_DIR, PATHS
+from ..config import CONFIGS_DIR, PATHS, TRAINING_DATASETS
 from ..logging_utils import get_logger
 
 log = get_logger("taxonomy")
@@ -50,6 +50,10 @@ CANONICAL_CONDITIONS = {
     "anthracnose", "leaf_rust", "brown_spot", "angular_leaf_spot",
     "bacterial_blight", "leaf_scorch", "phoma_leaf_spot", "downy_mildew",
     "red_rot", "wilt", "canker", "sooty_mold", "sigatoka",
+    # cassava (Kaggle gauravduttakiit/cassava-leaf-disease-classification)
+    "brown_streak_disease", "green_mottle", "mosaic_disease",
+    # rice (Kaggle nirmalsankalana/rice-leaf-disease-image)
+    "blast", "tungro", "leaf_scald", "hispa",
 }
 
 # species synonyms: normalized-token -> canonical
@@ -245,14 +249,14 @@ def resolve_label(src_dataset: str, raw_label: str) -> dict:
 
 
 def collect_raw_labels() -> list[tuple[str, str]]:
-    """(src_dataset, raw_label) pairs from every class folder under
-    data/raw/plantvillage and data/raw/digipathos. PlantDoc is excluded
-    from training-taxonomy building (it's test-only) but its object class
+    """(src_dataset, raw_label) pairs from every class folder under each
+    dataset in config.TRAINING_DATASETS. PlantDoc is excluded from
+    training-taxonomy building (it's test-only) but its object class
     names still go through resolve_label() at eval time in Phase E via the
     same functions imported directly.
     """
     pairs = []
-    for dataset in ("plantvillage", "digipathos"):
+    for dataset in TRAINING_DATASETS:
         root = PATHS.raw_dataset(dataset)
         if not root.exists():
             continue

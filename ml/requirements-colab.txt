@@ -14,5 +14,6 @@ scikit-learn>=1.5.0
 pyyaml>=6.0
 tqdm>=4.66.0
 kaggle>=1.6.14
+huggingface_hub>=0.23.0
 matplotlib>=3.8.0
 pytest>=8.0.0

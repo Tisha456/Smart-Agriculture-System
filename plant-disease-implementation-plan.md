@@ -195,20 +195,24 @@ drive_io.mount(); config.ensure_dirs(); config.env_report()
 
 ## A2. Acquire datasets
 
-**Goal:** the three raw datasets sitting in Drive `archives/`, extracted to local `data/raw/`, with download happening **once ever**.
+**Goal:** every dataset in `config.DATASETS` (the union of `paths.yaml`'s `training_datasets` and `eval_datasets`) sitting in Drive `archives/`, extracted to local `data/raw/`, with download happening **once ever**.
 
-**Files:** `ml/configs/sources.yaml`, `ml/src/agrisense_pd/data/download.py`.
+**Files:** `ml/configs/sources.yaml`, `ml/configs/paths.yaml`, `ml/src/agrisense_pd/data/download.py`.
 
 **Contract**
-- `sources.yaml` holds, per dataset: `kind` (`kaggle` | `http` | `git` | `manual`), locator, expected archive filename, and expected approximate size.
-  - **PlantVillage** — Kaggle `mohitsingh1804/plantvillage`. Requires `kaggle.json`.
-  - **Digipathos** — Embrapa repository. Not a single archive: it's ~90+ separate zip files, one per (crop, disorder) class, served through Embrapa's own collection API. The script uses the community `digipathos` PyPI package (github.com/rodrigobressan/digipathos) to walk that API and extract each class into a PlantVillage-style `<crop>___<disorder>` folder. That package wraps a specific, unofficial endpoint last updated ~2019 — its access route is the least stable of the three, and on any failure the script must **fall through to manual mode** with a printed instruction. Do not let a broken API block the phase; training on PlantVillage + PlantDoc alone is a fully supported fallback.
+- Which datasets get fetched is controlled entirely by `paths.yaml`'s `training_datasets` / `eval_datasets` lists, not by what happens to be listed in `sources.yaml` — an entry can exist there (kept for the record) without being active. Adding a new dataset is a config edit in these two files, not a code change to `download.py`.
+- `sources.yaml` holds, per dataset: `kind` (`kaggle` | `http` | `git` | `huggingface` | `digipathos_pip` | `unavailable` | `manual`), locator, expected archive filename, and expected approximate size.
+  - **PlantVillage** — Kaggle `mohitsingh1804/plantvillage`. Requires `kaggle.json`. Folder-per-class, `Species___Condition`.
+  - **PlantWild** — HuggingFace dataset `uqtwei2/PlantWild` (two zips: v1 + v2, 30,030 images, 146 classes combined). Fetched via `huggingface_hub.hf_hub_download`, no Kaggle/Embrapa dependency. **Replaces Digipathos** — chosen specifically because it is *in-the-wild crowdsourced* imagery, directly targeting the documented PlantDoc real-world accuracy gap rather than adding more lab-condition data. License CC BY-NC-ND 4.0 (accepted for this personal-project model). Its internal label format is **not publicly documented**; Phase A3's report is what actually reveals it — do not assume a convention before reading `artifacts/inspect_plantwild.md`.
+  - **Cassava** — Kaggle `nirmalsankalana/cassava-leaf-disease-classification` (folder-per-class re-packaging; deliberately not the raw competition mirror, which is a flat `train_images/` + `train.csv` format this pipeline's folder scanner can't read without a CSV-restructuring step this build does not have). Real field photos, 5 classes.
+  - **Rice** — Kaggle `nirmalsankalana/rice-leaf-disease-image`. Confirmed folder-per-class, 4 disease classes, no healthy class.
+  - **Digipathos** — `kind: unavailable`. **Confirmed dead**: the host actively refuses connections (`ECONNREFUSED`), reproduced from both a local machine and a live Colab session with unrestricted internet. Every known downloader package (`digipathos`, `georg-un/...`, `mtxslv/digipathos_downloader`) hits the identical Embrapa endpoint, so no package swap fixes an unreachable host. `download.py` skips this entry with an informational message rather than retrying — this is expected steady-state behavior, not a failure to handle.
   - **PlantDoc** — public GitHub repo. Two variants exist: the object-detection version (images + Pascal VOC XML) and a folder-per-class classification version. **Fetch the detection version** — Phase E2 needs the boxes, and the classification split is derivable from it.
 - Order of operations per dataset: archive already in Drive → skip download → copy to `/content` → extract → verify → delete the local archive copy (not the Drive one).
 - `--only <name>` to fetch one dataset; `--force` to re-download.
 - Kaggle credentials: if `~/.kaggle/kaggle.json` is absent, print exactly what to upload and where, then exit non-zero.
 
-**Accept when:** `data/raw/{plantvillage,digipathos,plantdoc}` are each non-empty, no stray archives under `/content`, and re-running the script downloads nothing.
+**Accept when:** every dataset in `config.DATASETS` is non-empty except `digipathos` (which reports `SKIPPED`, not `MISSING`), no stray archives under `/content`, and re-running the script downloads nothing.
 
 ---
 
@@ -260,13 +264,14 @@ drive_io.mount(); config.ensure_dirs(); config.env_report()
 **Files:** `ml/src/agrisense_pd/imaging.py`, `ml/src/agrisense_pd/data/clean.py`.
 
 **Contract**
-- For every image in PlantVillage + Digipathos (**PlantDoc is untouched** — it is test-only), compute: decodability, `(width,height)`, `sha256`, `phash` (64-bit).
-- Reject rules, each recorded with a reason: `unreadable`, `truncated`, `too_small` (min side < 64 px), `bad_aspect` (ratio > 5:1), `exact_duplicate` (sha256 already seen — keep first, PlantVillage wins ties for stability), `unmapped` (label has no taxonomy entry).
+- For every image in every `config.TRAINING_DATASETS` entry (**PlantDoc is untouched as training data** — it is test-only), compute: decodability, `(width,height)`, `sha256`, `phash` (64-bit).
+- Reject rules, each recorded with a reason: `unreadable`, `truncated`, `too_small` (min side < 64 px), `bad_aspect` (ratio > 5:1), `exact_duplicate` (sha256 already seen — keep first, PlantVillage wins ties for stability), `unmapped` (label has no taxonomy entry), `plantdoc_overlap` (see below).
 - Near-duplicates are **not** rejected. Cluster by Hamming distance ≤ 5 on `phash` and assign a shared `dup_group` id; singletons get their own group. Use a BK-tree or bucketed LSH — a naive O(n²) comparison over ~100k images will not finish in a session.
+- **Cross-dataset contamination guard:** PlantDoc images are fingerprinted too (read-only — never written to `fingerprints.csv`, never trained on), and any training image within Hamming distance ≤ 5 of a PlantDoc image is rejected as `plantdoc_overlap`. This exists specifically because PlantWild is crowdsourced from Google/Ecosia/Baidu image search — the same route PlantDoc's images came from — so a duplicate landing on both sides is a real risk, not a theoretical one, and would silently inflate Phase E1's real-world accuracy number if left unguarded.
 - Rejected files are **quarantined by reference**, not moved: write `manifests/rejected.csv` and copy at most 50 samples per reason into `data/clean/rejected/<reason>/` for eyeballing. Moving 10k files on Drive is pointless I/O.
 - Parallelize hashing across CPU workers with a `tqdm` progress bar; checkpoint partial results every 5000 images to `manifests/fingerprints.partial.csv` so a disconnect does not cost the whole pass.
 
-**Accept when:** rejection rate is under ~5% of the corpus. If it is higher, stop and read `rejected.csv` — a systematic misread (wrong extension filter, a nested folder level missed in A3) is far more likely than 20% of a curated dataset being broken.
+**Accept when:** rejection rate is under ~5% of the corpus. If it is higher, stop and read `rejected.csv` — a systematic misread (wrong extension filter, a nested folder level missed in A3) is far more likely than 20% of a curated dataset being broken. A `plantdoc_overlap` count on its own is not necessarily a problem (PlantWild/PlantDoc sharing a data source makes some overlap plausible) but is worth reading if it's large relative to PlantWild's size.
 
 ---
 
@@ -572,5 +577,6 @@ Total ≈ 2–3 free-tier sessions if nothing goes wrong. The resume machinery i
 
 1. **Stage 1 base model** — spec says `yolo11s-cls`. Say so if you want `n` (faster, ~1 pt less accurate).
 2. **Deploy target** — spec assumes Cloud Run. Confirm or change.
-3. **Digipathos access route** — if the automated pip-package download fails at A2, you download the classes you want manually from the Embrapa repository and extract them into `data/raw/digipathos/<crop>___<disorder>/` folders. Expect this to be hit-or-miss; skipping Digipathos entirely is a fully supported fallback.
+3. **Digipathos** — RESOLVED: confirmed dead (server refuses connections). Replaced by PlantWild in `training_datasets`. If Embrapa's service ever comes back, flip `digipathos`'s `kind` in `sources.yaml` back to `digipathos_pip` and add it to `training_datasets`.
 4. **Low-confidence threshold** — set after E1, since it depends on the real calibration numbers.
+5. **PlantWild license (CC BY-NC-ND 4.0)** — accepted for this personal-project model. Revisit before any commercial use of the trained weights.

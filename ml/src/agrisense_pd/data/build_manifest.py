@@ -38,7 +38,10 @@ def _read_fingerprints() -> list[dict]:
 
 def build() -> None:
     rows = _read_fingerprints()
-    raw_root_by_dataset = {ds: str(PATHS.raw_dataset(ds)) for ds in ("plantvillage", "digipathos")}
+    # Derived from whatever datasets actually appear in fingerprints.csv —
+    # generalizes automatically to any dataset in config.TRAINING_DATASETS
+    # without hardcoding names here.
+    raw_root_by_dataset = {r["src_dataset"]: str(PATHS.raw_dataset(r["src_dataset"])) for r in rows}
 
     seen_ids: set[str] = set()
     out_rows = []

@@ -1,12 +1,19 @@
-"""Phase B2 — clean & fingerprint PlantVillage + Digipathos images.
+"""Phase B2 — clean & fingerprint all training datasets (config.TRAINING_DATASETS).
 
-PlantDoc is untouched here — it is test-only (see roadmap).
+PlantDoc is untouched as training data — it is test-only (see roadmap) —
+but IS read here to build a phash lookup used to reject any training image
+that's a near-duplicate of a PlantDoc test image. This matters specifically
+because PlantWild is crowdsourced from Google/Ecosia/Baidu image search,
+the same route PlantDoc's images came from — without this check, a
+duplicate landing in both sides would silently inflate Phase E1's
+real-world accuracy number (see plant-disease-implementation-plan.md
+section 1.4 and configs/sources.yaml's plantwild entry).
 
-For every image: decodability, size, sha256, phash. Rejects unreadable /
-too-small / bad-aspect / exact-duplicate / unmapped-label images (each with
-a logged reason). Near-duplicates are NOT rejected — they get a shared
-dup_group id so Phase C0 can keep whole clusters on one side of the split
-(see plant-disease-implementation-plan.md section 1.4).
+For every training image: decodability, size, sha256, phash. Rejects
+unreadable / too-small / bad-aspect / exact-duplicate / unmapped-label /
+plantdoc-overlap images (each with a logged reason). Near-duplicates
+WITHIN training data are NOT rejected — they get a shared dup_group id so
+Phase C0 can keep whole clusters on one side of the split.
 
 Checkpoints partial hashing progress every N images to
 manifests/fingerprints.partial.csv so a Colab disconnect mid-pass doesn't
@@ -29,7 +36,7 @@ from typing import Optional
 
 from tqdm import tqdm
 
-from ..config import PATHS, SEED
+from ..config import PATHS, SEED, TRAINING_DATASETS
 from ..imaging import PHASH_HAMMING_THRESHOLD, hamming_distance_hex, inspect_image
 from ..logging_utils import get_logger
 from .taxonomy import resolve_label, load_overrides
@@ -42,10 +49,10 @@ MAX_SAMPLES_PER_REASON = 50
 
 
 def _collect_candidate_images() -> list[tuple[str, str, Path]]:
-    """(src_dataset, src_label, path) for every image under plantvillage
-    and digipathos raw folders."""
+    """(src_dataset, src_label, path) for every image under each training
+    dataset's raw folder (config.TRAINING_DATASETS)."""
     out = []
-    for dataset in ("plantvillage", "digipathos"):
+    for dataset in TRAINING_DATASETS:
         root = PATHS.raw_dataset(dataset)
         if not root.exists():
             continue
@@ -59,6 +66,51 @@ def _collect_candidate_images() -> list[tuple[str, str, Path]]:
                 if f.is_file() and f.suffix.lower() in IMAGE_EXTS:
                     out.append((dataset, label, f))
     return out
+
+
+def fingerprint_plantdoc_phashes() -> list[str]:
+    """Perceptual hashes of every PlantDoc image (read-only — PlantDoc is
+    never written to fingerprints.csv or trained on). Returns an empty
+    list if PlantDoc hasn't been downloaded yet rather than erroring, so
+    clean.py still works if run before Phase A2's plantdoc fetch.
+    """
+    root = PATHS.raw_dataset("plantdoc")
+    if not root.exists():
+        return []
+    image_files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS]
+    phashes = []
+    for p in tqdm(image_files, desc="fingerprinting plantdoc (for overlap check)"):
+        info = inspect_image(p)
+        if info.ok and info.phash:
+            phashes.append(info.phash)
+    return phashes
+
+
+def find_plantdoc_overlaps(rows: list[dict], plantdoc_phashes: list[str]) -> set[str]:
+    """Given training rows (each with a 'path' and 'phash') and a list of
+    PlantDoc phashes, return the set of training-row paths whose phash is
+    within PHASH_HAMMING_THRESHOLD of any PlantDoc image. Bucketed by
+    phash prefix so this stays fast even with ~100k training rows against
+    ~5k PlantDoc images (see clean.py module docstring for why this check
+    exists).
+    """
+    if not plantdoc_phashes:
+        return set()
+
+    buckets: dict[str, list[str]] = defaultdict(list)
+    for ph in plantdoc_phashes:
+        buckets[ph[:4]].append(ph)
+
+    overlap_paths: set[str] = set()
+    for r in rows:
+        phash = r.get("phash")
+        if not phash:
+            continue
+        for ph in buckets.get(phash[:4], ()):
+            if hamming_distance_hex(phash, ph) <= PHASH_HAMMING_THRESHOLD:
+                overlap_paths.add(r["path"])
+                break
+    return overlap_paths
 
 
 def _worker(args: tuple[str, str, str]) -> dict:
@@ -218,6 +270,32 @@ def run(workers: int = 8, force: bool = False) -> None:
         rejected.append({"path": path, "reason": "exact_duplicate"})
 
     final_ok = [r for r in ok_rows if r["path"] not in exact_dup_paths]
+
+    # Cross-dataset contamination guard: reject any training image that is
+    # a near-duplicate of a PlantDoc TEST image (see module docstring —
+    # matters most for PlantWild, which is crowdsourced the same way
+    # PlantDoc is). PlantDoc itself is never modified or trained on.
+    plantdoc_phashes = fingerprint_plantdoc_phashes()
+    if plantdoc_phashes:
+        log.info(
+            "Checking %d clean training images against %d PlantDoc phashes for overlap...",
+            len(final_ok), len(plantdoc_phashes),
+        )
+        overlap_paths = find_plantdoc_overlaps(final_ok, plantdoc_phashes)
+        for path in overlap_paths:
+            rejected.append({"path": path, "reason": "plantdoc_overlap"})
+        if overlap_paths:
+            log.warning(
+                "%d training images are near-duplicates of PlantDoc test images — rejected "
+                "to keep Phase E1's real-world accuracy number honest.",
+                len(overlap_paths),
+            )
+        final_ok = [r for r in final_ok if r["path"] not in overlap_paths]
+    else:
+        log.info(
+            "PlantDoc not downloaded yet — skipping train/test overlap check "
+            "(safe: re-run clean.py after Phase A2 fetches it)."
+        )
 
     # Write rejected.csv (full log) + sample up to 50 per reason into
     # data/clean/rejected/<reason>/ for eyeballing.

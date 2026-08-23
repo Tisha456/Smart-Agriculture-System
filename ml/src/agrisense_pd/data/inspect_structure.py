@@ -17,7 +17,7 @@ from typing import Optional
 
 from PIL import Image
 
-from ..config import PATHS
+from ..config import DATASETS, EVAL_DATASETS, PATHS
 from ..logging_utils import get_logger
 
 log = get_logger("inspect_structure")
@@ -165,15 +165,16 @@ def _write_folder_report(f: dict) -> None:
     log.info("Wrote %s", out_path)
 
 
-def inspect_plantdoc() -> dict:
-    """PlantDoc (detection variant): images + Pascal VOC XML. Reports
-    object class names and box-count-per-image distribution in addition
-    to the standard structure summary.
+def inspect_detection_dataset(name: str) -> dict:
+    """For eval datasets (config.EVAL_DATASETS — currently just PlantDoc):
+    images + Pascal VOC XML. Reports object class names and
+    box-count-per-image distribution in addition to the standard
+    structure summary.
     """
-    root = PATHS.raw_dataset("plantdoc")
+    root = PATHS.raw_dataset(name)
     if not root.exists() or not any(root.iterdir()):
-        log.warning("plantdoc: raw folder empty or missing at %s", root)
-        return {"name": "plantdoc", "error": "empty_or_missing"}
+        log.warning("%s: raw folder empty or missing at %s", name, root)
+        return {"name": name, "error": "empty_or_missing"}
 
     xml_files = list(root.rglob("*.xml"))
     image_files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS]
@@ -198,7 +199,7 @@ def inspect_plantdoc() -> dict:
     res_stats = _sample_resolutions(image_files)
 
     findings = {
-        "name": "plantdoc",
+        "name": name,
         "n_images": len(image_files),
         "n_xml": len(xml_files),
         "xml_parse_errors": parse_errors,
@@ -210,15 +211,15 @@ def inspect_plantdoc() -> dict:
         "ext_histogram": dict(ext_counter),
         "resolution": res_stats,
     }
-    _write_plantdoc_report(findings)
+    _write_detection_report(findings)
     return findings
 
 
-def _write_plantdoc_report(f: dict) -> None:
-    out_path = PATHS.artifacts / "inspect_plantdoc.md"
+def _write_detection_report(f: dict) -> None:
+    out_path = PATHS.artifacts / f"inspect_{f['name']}.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# Inspection report — plantdoc (object detection variant)",
+        f"# Inspection report — {f['name']} (object detection variant)",
         "",
         f"- Images: **{f['n_images']}**",
         f"- XML annotation files: **{f['n_xml']}** (parse errors: {f['xml_parse_errors']})",
@@ -254,7 +255,7 @@ def write_combined_summary(results: list[dict]) -> None:
         if r.get("error"):
             lines.append(f"## {r['name']}: {r['error']}")
             continue
-        if r["name"] == "plantdoc":
+        if r["name"] in EVAL_DATASETS:
             lines.append(
                 f"## {r['name']}: {r['n_images']} images, "
                 f"{r['n_object_classes']} object classes (detection dataset, test-only)"
@@ -272,18 +273,16 @@ def write_combined_summary(results: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Phase A3: inspect raw dataset structure.")
-    parser.add_argument(
-        "--only", choices=["plantvillage", "digipathos", "plantdoc"], default=None
-    )
+    parser.add_argument("--only", choices=DATASETS, default=None)
     args = parser.parse_args()
 
+    targets = [args.only] if args.only else DATASETS
     results = []
-    if args.only in (None, "plantvillage"):
-        results.append(inspect_folder_dataset("plantvillage"))
-    if args.only in (None, "digipathos"):
-        results.append(inspect_folder_dataset("digipathos"))
-    if args.only in (None, "plantdoc"):
-        results.append(inspect_plantdoc())
+    for name in targets:
+        if name in EVAL_DATASETS:
+            results.append(inspect_detection_dataset(name))
+        else:
+            results.append(inspect_folder_dataset(name))
 
     write_combined_summary(results)
 

@@ -82,10 +82,11 @@ PlantVillage downloads through Kaggle's API.
 
 ## Step 0.4 — Check your Google Drive space
 
-The pipeline stores ~5–8 GB on Drive (dataset archives + model checkpoints).
+The pipeline stores ~13 GB of dataset archives (PlantVillage + PlantWild +
+Cassava + Rice + PlantDoc) plus model checkpoints on Drive.
 
 1. Go to https://drive.google.com/settings/storage
-2. Make sure you have **at least 10 GB free**.
+2. Make sure you have **at least 20 GB free**.
 
 ✅ **Expect:** ≥10 GB free. If not, clear space now — running out
 mid-training corrupts checkpoint syncs.
@@ -166,39 +167,36 @@ without a GPU.
 
 ---
 
-## Step 2.2 — Run Cell 5 (download all three datasets) ⏱️
+## Step 2.2 — Run Cell 5 (download all datasets) ⏱️
 
-This downloads PlantVillage (~800 MB), Digipathos (~2 GB), and PlantDoc
-(~1.7 GB). Takes 30–60 minutes.
+This downloads five sources, each fetched via `configs/paths.yaml`'s
+`training_datasets` / `eval_datasets` lists (adding one more later is a
+config edit, not a code change):
 
-✅ **Expect:** a final summary showing `OK` for all three datasets.
+| Dataset | Size | What it's for |
+|---|---|---|
+| PlantVillage | ~800 MB | Main lab-condition training data, ~14 crops |
+| **PlantWild** | **~4.4 GB** | In-the-wild real photos, 146 classes — the fix for the real-world accuracy gap (Step 5.2) |
+| Cassava | ~5.8 GB | Real field photos, adds cassava |
+| Rice | ~500 MB | Adds rice (zero PlantVillage coverage) |
+| PlantDoc | ~1.7 GB | Real-world test set only, never trained on |
 
-⚠️ **Digipathos is not a single zip file** — Embrapa serves it as ~90+
-separate zip archives, one per (crop, disorder) class, through its own
-API. Cell 5 first tries the community `digipathos` Python package to walk
-that API automatically and extract each class into its own folder.
+Total ~13 GB, likely 45–90 minutes depending on your connection.
 
-**If that automated path succeeds:** you'll see log lines like
-`Digipathos: N classes downloaded OK` — nothing more to do, move on.
+✅ **Expect:** a final summary showing `OK` for PlantVillage, PlantWild,
+Cassava, Rice, and PlantDoc, plus one line reading
+`digipathos: SKIPPED (known unavailable, see sources.yaml)`.
 
-**If it fails** (the package wraps a specific, unofficial API from ~2019 —
-it may be stale if Embrapa changed their repository since):
+⚠️ **That Digipathos line is expected, not an error.** Embrapa's server
+actively refuses connections — confirmed dead, not a flaky download.
+It's intentionally excluded from `training_datasets` and PlantWild
+replaces it (and does the job better — real-world images, not lab
+conditions).
 
-1. Read the printed message for the exact destination path.
-2. Open https://www.digipathos-rep.cnptia.embrapa.br in a normal browser tab
-   and browse/download whichever crop/disorder zip archives you want.
-3. Extract each one into your Google Drive at:
-   `MyDrive/AgriSense_PlantDisease/` → actually, extract locally in Colab
-   at `/content/agrisense_pd/data/raw/digipathos/<crop>___<disorder>/`
-   (use the same `Species___Condition`-style naming as PlantVillage — e.g.
-   `Coffee___Leaf_Rust`), one folder per class, images directly inside.
-4. No need to re-run Cell 5 — move straight to Cell 6.
-
-💡 **Recommended shortcut if this gets fiddly:** proceed with PlantVillage
-+ PlantDoc alone. You'll get fewer species and narrower coverage, but the
-whole pipeline works unchanged. Given the automated path may be hit-or-miss
-on a 2019-era API, don't sink more than ~15-20 minutes into manual
-Digipathos wrangling before falling back to this.
+💡 **If any single dataset fails** (Kaggle/HuggingFace hiccup), you can
+retry just that one: `!python -m agrisense_pd.data.download --only plantwild`
+(swap in `cassava`, `rice`, etc.). Everything already downloaded is
+skipped automatically.
 
 ---
 
@@ -242,21 +240,26 @@ training data.
 
 ```yaml
 overrides:
-  - src_dataset: digipathos
-    src_label: "Milho_Mancha_Foliar_Cercospora"
+  - src_dataset: plantwild
+    src_label: "corn_gray_leaf_spot"
     species: maize
     condition: gray_leaf_spot
-  - src_dataset: digipathos
-    src_label: "Cafe_Ferrugem"
-    species: coffee
-    condition: leaf_rust
+  - src_dataset: cassava
+    src_label: "cbb"
+    species: cassava
+    condition: bacterial_blight
 ```
 
 **Rules:**
-- `src_dataset` = `plantvillage` or `digipathos`
+- `src_dataset` = whichever dataset the label came from (`plantvillage`, `plantwild`, `cassava`, or `rice`)
 - `src_label` = copy the label **exactly** as Cell 7 printed it
 - `species` / `condition` = lowercase `snake_case`, no spaces, no accents
 - Use `healthy` as the condition for healthy-plant classes
+
+⚠️ **PlantWild's label format isn't publicly documented** — you're likely
+to see more review entries from it than from PlantVillage. That's
+expected; read `artifacts/inspect_plantwild.md` (from Cell 6) if the
+labels printed by Cell 7 don't make sense on their own.
 
 5. **Ctrl+S** to save
 6. **Re-run Cell 7**
@@ -271,11 +274,19 @@ mean the same thing didn't merge — add an override to unify them.
 ## Step 3.3 — Run Cell 9 (clean & fingerprint) ⏱️ ~30–50 min
 
 Checks every image for corruption, removes exact duplicates, and clusters
-near-duplicates so they can't leak across your train/test split.
+near-duplicates so they can't leak across your train/test split. It also
+checks every training image against PlantDoc's phashes and rejects any
+near-duplicate (reason `plantdoc_overlap`) — this matters because
+PlantWild is crowdsourced from the same web-image-search route PlantDoc's
+photos came from, so without this check a duplicate could land on both
+sides and quietly inflate Step 5.2's real-world accuracy number.
 
 ✅ **Expect:** a rejection summary. **Rejection rate should be under 5%.**
+A small `plantdoc_overlap` count is normal and good (it means the check
+worked); a large one is worth a look but isn't inherently wrong given
+PlantWild and PlantDoc share a data source.
 
-⚠️ **If it's over 5%,** it prints a warning. Stop and open
+⚠️ **If total rejection is over 5%,** it prints a warning. Stop and open
 `MyDrive/AgriSense_PlantDisease/manifests/rejected.csv` — a high rate
 almost always means a systematic problem (an unmapped label family, a
 wrong folder level), not genuinely bad data.
@@ -709,8 +720,16 @@ account. Your progress is safe on Drive — resume with the protocol above.
 → Re-run Cell 4 and upload `kaggle.json` again (Colab runtimes lose
 `/root/` between sessions).
 
-**Digipathos download fails**
-→ Expected. See Step 2.2 for the manual route.
+**Digipathos shows as SKIPPED**
+→ Expected, not an error — Embrapa's server is confirmed unreachable.
+PlantWild replaces it in `training_datasets`. Nothing to do.
+
+**PlantWild, Cassava, or Rice download fails**
+→ Retry just that one: `!python -m agrisense_pd.data.download --only plantwild`
+(or `cassava`, `rice`). If a Kaggle one fails, re-check Step 0.3's
+`kaggle.json`. If it keeps failing, you can drop that dataset from
+`training_datasets` in `ml/configs/paths.yaml` and continue with the rest —
+the pipeline works with any subset.
 
 **Cell 7 keeps showing labels to review**
 → Each round only fixes labels you added overrides for. Keep adding

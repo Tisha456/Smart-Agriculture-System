@@ -1,8 +1,13 @@
 # Dataset acquisition sources for Phase A2.
-# kind: kaggle | http | git | manual
+# kind: kaggle | http | git | huggingface | digipathos_pip | unavailable | manual
 # "manual" datasets/fallbacks require you to download the file yourself and
 # drop it in <drive_root>/archives/<expected_archive> — download.py will tell
 # you this explicitly if the automated path fails.
+#
+# Which entries are actually used for training/eval is controlled by
+# paths.yaml's training_datasets / eval_datasets lists, NOT by presence
+# here — an entry can exist (e.g. digipathos, kept for the record) without
+# being fetched or merged into anything.
 
 plantvillage:
   kind: kaggle
@@ -13,32 +18,87 @@ plantvillage:
     Requires kaggle.json in ~/.kaggle/. Folder convention inside is
     "Species___Condition".
 
-digipathos:
-  kind: digipathos_pip
-  # Digipathos is NOT one big archive — Embrapa serves it as ~90+ separate
-  # zip files, one per (crop, disorder) class, through a JSPUI collection
-  # API. download.py uses the community `digipathos` PyPI package
-  # (github.com/rodrigobressan/digipathos) to walk that API, downloading
-  # each class's zip and extracting it into a PlantVillage-style
-  # "<crop>___<disorder>" folder so it merges cleanly with the rest of the
-  # pipeline. That package wraps a specific, unofficial API endpoint last
-  # updated ~2019 — if Embrapa has since restructured its repository this
-  # may fail; download.py falls through to manual instructions in that
-  # case. Skipping Digipathos entirely and training on PlantVillage +
-  # PlantDoc alone is a fully supported fallback (narrower species
-  # coverage, everything else unchanged).
-  doi_landing_page: "https://www.digipathos-rep.cnptia.embrapa.br"
-  approx_size_mb: 1500
-  approx_image_count: 46376
+plantwild:
+  kind: huggingface
+  # In-the-wild, crowdsourced plant disease images — chosen to replace
+  # Digipathos because it directly attacks the documented PlantDoc
+  # real-world accuracy gap (clean validation in the high 90s, PlantDoc
+  # historically 40-70%), rather than just adding more lab-condition data.
+  repo_id: "uqtwei2/PlantWild"
+  repo_type: dataset
+  hf_files: ["plantwild.zip", "plantwild_v2.zip"]
+  approx_size_mb: 4400
+  approx_image_count: 30030
+  license: "CC BY-NC-ND 4.0"
   notes: >
-    If the automated pip-package path fails, browse the collection at the
+    v1 (18,542 images, 89 classes) + v2 (11,488 images, 115 classes) =
+    30,030 images, 146 classes total. CC BY-NC-ND — non-commercial, no
+    derivatives; user has accepted this for a personal-project model.
+    Internal folder/label structure is NOT publicly documented — read
+    artifacts/inspect_plantwild.md (Phase A3) after download to see the
+    real convention before taxonomy.py runs. IMPORTANT: images are
+    crowdsourced from Google/Ecosia/Baidu image search, the same route
+    PlantDoc's images came from — clean.py cross-checks every PlantWild
+    image against PlantDoc's phashes and rejects near-duplicates
+    (reason: plantdoc_overlap) so Phase E1's real-world number can't be
+    contaminated by train/test overlap.
+
+cassava:
+  kind: kaggle
+  # Deliberately NOT gauravduttakiit's mirror — that one is the raw Kaggle
+  # competition format (flat train_images/ + train.csv label file, no
+  # class folders), which this pipeline's folder-per-class scanner
+  # (clean.py/_collect_candidate_images) cannot read without a CSV
+  # restructuring step. nirmalsankalana's mirror is explicitly described
+  # as "Directory Format" (i.e. pre-organized into class folders like
+  # PlantVillage) — verify this the moment Phase A3 runs: if
+  # artifacts/inspect_cassava.md reports ~1 class with a generic folder
+  # name like "train_images", the format assumption was wrong; open an
+  # issue/switch back to gauravduttakiit + write a CSV-restructure step.
+  slug: "nirmalsankalana/cassava-leaf-disease-classification"
+  expected_archive: "cassava.zip"
+  approx_size_mb: 5800
+  approx_image_count: 21367
+  notes: >
+    Real field photos crowdsourced from Ugandan farmers, annotated by
+    NaCRRI + Makerere University AI lab. 5 classes: Cassava Bacterial
+    Blight, Brown Streak Disease, Green Mottle, Mosaic Disease, healthy.
+    Adds a species PlantVillage/PlantWild may not weight heavily, with
+    real-world (not lab) conditions.
+
+rice:
+  kind: kaggle
+  slug: "nirmalsankalana/rice-leaf-disease-image"
+  expected_archive: "rice.zip"
+  approx_size_mb: 500
+  approx_image_count: 5932
+  notes: >
+    Rice leaf images, confirmed folder-per-class (Bacterial Blight/,
+    Blast/, Brown Spot/, Tungro/ — 1584/1440/1600/1308 images). No healthy
+    class included, so rice will have no "healthy" condition until one is
+    added from elsewhere. Rice has no PlantVillage coverage at all —
+    cheapest way to add a major staple crop.
+
+digipathos:
+  kind: unavailable
+  # CONFIRMED DEAD as of this investigation: the host actively refuses
+  # connections (ECONNREFUSED 200.0.70.2:443), reproduced both from this
+  # machine and from a live Colab session with unrestricted internet.
+  # Every known downloader (digipathos, georg-un/..., mtxslv/...) hits the
+  # identical endpoint digipathos-rep.cnptia.embrapa.br
+  # /jspui/zipsincollection/123456789/3 — no package swap fixes an
+  # unreachable host. download.py skips this entry with an informational
+  # message rather than attempting it. Replaced by `plantwild` above.
+  # Left here (not deleted) in case Embrapa's service returns later —
+  # flip kind back to digipathos_pip to retry.
+  doi_landing_page: "https://www.digipathos-rep.cnptia.embrapa.br"
+  notes: >
+    If you want to retry manually anyway: browse the collection at the
     landing page above, download whichever per-crop/disorder zips you
     want, extract each into
     <local_root>/data/raw/digipathos/<crop>___<disorder>/, matching
-    PlantVillage's folder-per-class convention. No need to re-run this
-    script afterward — it detects the populated folder and moves on;
-    proceed straight to inspect_structure.py (Phase A3). Labels are in
-    Portuguese — handled by taxonomy.py's synonym table.
+    PlantVillage's folder-per-class convention, then add "digipathos" to
+    paths.yaml's training_datasets list.
 
 plantdoc:
   kind: git
