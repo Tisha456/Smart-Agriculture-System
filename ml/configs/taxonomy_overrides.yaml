@@ -21,4 +21,8 @@
 #     species: bell_pepper
 #     condition: bacterial_spot
 
-overrides: []
+overrides:
+  - src_dataset: plantwild
+    src_label: "plantwild"
+    species: background
+    condition: background
