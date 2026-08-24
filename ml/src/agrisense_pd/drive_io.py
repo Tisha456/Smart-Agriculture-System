@@ -40,6 +40,10 @@ def mount() -> None:
         return
 
     if not is_colab():
+        if "AGRISENSE_PD_DRIVE_ROOT" in os.environ:
+            PATHS.drive_root.mkdir(parents=True, exist_ok=True)
+            log.info("Not on Colab — using %s as durable storage (no mount needed).", PATHS.drive_root)
+            return
         raise RuntimeError(
             "drive_io.mount() called off Colab. Set AGRISENSE_PD_DRIVE_ROOT to "
             "a local directory instead for non-Colab development/testing."
