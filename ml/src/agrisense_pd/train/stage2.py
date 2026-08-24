@@ -72,7 +72,7 @@ def train_one_species(species: str, cfg: dict, augment_profile: str = "default")
         callbacks.attach_checkpoint_sync(
             model, drive_dest, every_n_epochs=sp_cfg.get("checkpoint_sync_every_n_epochs", 2)
         )
-        model.train(resume=True)
+        model.train(resume=True, workers=sp_cfg["workers"])
     else:
         log.info("[%s] Starting fresh training from %s.", species, sp_cfg["model"])
         model = YOLO(sp_cfg["model"])

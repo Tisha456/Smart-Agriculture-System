@@ -50,7 +50,7 @@ def train(cfg: dict) -> tuple["object", Path]:
         callbacks.attach_checkpoint_sync(
             model, drive_dest, every_n_epochs=cfg.get("checkpoint_sync_every_n_epochs", 2)
         )
-        results = model.train(resume=True)
+        results = model.train(resume=True, workers=cfg["workers"])
     else:
         log.info("No existing checkpoint — starting Stage 1 training from %s.", cfg["model"])
         model = YOLO(cfg["model"])
