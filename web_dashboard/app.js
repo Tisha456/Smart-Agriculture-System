@@ -249,7 +249,7 @@ async function handleSignup() {
   try {
     const { data, error } = await supabaseClient.auth.signUp({ email, password });
     if (error) throw error;
-    showToast('Account created! Please sign in.', 'success');
+    showToast('Account created! Check your email to confirm it, then sign in.', 'success');
     switchAuthTab('login');
   } catch (err) {
     errBox.textContent = err.message || 'Signup failed';

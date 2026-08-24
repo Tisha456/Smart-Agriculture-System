@@ -17,7 +17,7 @@
       },
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://iqmrpwvbmfkhychhditg.supabase.co",
-        "EXPO_PUBLIC_BACKEND_URL": "http://10.87.216.17:8000"
+        "EXPO_PUBLIC_BACKEND_URL": "https://agrisense-ai-cqzv.onrender.com"
       }
     },
     "production": {
@@ -27,7 +27,7 @@
       },
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://iqmrpwvbmfkhychhditg.supabase.co",
-        "EXPO_PUBLIC_BACKEND_URL": "http://10.87.216.17:8000"
+        "EXPO_PUBLIC_BACKEND_URL": "https://agrisense-ai-cqzv.onrender.com"
       }
     }
   },

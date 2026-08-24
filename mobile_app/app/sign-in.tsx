@@ -45,7 +45,7 @@ export default function SignInScreen() {
     setBusy(true);
     try {
       await signUp(email.trim(), password);
-      setInfo('Account created! Please sign in.');
+      setInfo('Account created! Check your email to confirm it, then sign in.');
       setTab('login');
     } catch (err: any) {
       setError(err.message ?? 'Signup failed');
