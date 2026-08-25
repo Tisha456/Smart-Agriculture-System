@@ -86,20 +86,27 @@
 #define RELAY_PUMP_PIN     16     // Relay IN           → GPIO 16
 
 // ── Soil Moisture Calibration ─────────────────────────────────────────────────
+// Measured on this board: dry air ≈ 4095, probe fully submerged ≈ 30.
+// Re-measure if you swap the probe — these are per-sensor, not universal.
 // Step 1: Leave sensor in dry air → note ADC reading → set SOIL_DRY_VALUE
 // Step 2: Submerge probe in water  → note ADC reading → set SOIL_WET_VALUE
 #define SOIL_DRY_VALUE     4095   // Raw ADC when fully dry (12-bit max)
-#define SOIL_WET_VALUE     1500   // Raw ADC when submerged in water
+#define SOIL_WET_VALUE     30     // Raw ADC when submerged in water (measured)
 
 // ── Soil Sensor Disconnect Detection ──────────────────────────────────────────
-// If the probe is unplugged, GPIO34 floats and its raw ADC reading depends on
-// your specific wiring — you must calibrate this on your own board:
+// If the probe is unplugged, GPIO34 floats and reads near 0 (input-only pin,
+// no internal pull-up). Calibrate on your own board:
 //   1. Flash this firmware, open Serial Monitor.
 //   2. Unplug the soil probe. Note the raw ADC value printed each tick.
 //   3. Plug it back in, place it in dry soil. Note the raw ADC value again.
-//   4. Set SOIL_DISCONNECT_ADC to a value between the two (closer to the
-//      unplugged reading), so real dry soil is never misread as "disconnected".
-#define SOIL_DISCONNECT_ADC  100
+//   4. Set SOIL_DISCONNECT_ADC between the two, closer to the unplugged one.
+//
+// ponytail: this threshold sits in a narrow gap — a submerged probe reads ~30
+// here and a floating pin reads ~0, so "fully wet" and "unplugged" are only
+// ~30 counts apart. 10 separates them on this board, but it is not a wide
+// margin. If disconnect detection ever misfires, read DO (the module's
+// digital output) as a second signal instead of widening this.
+#define SOIL_DISCONNECT_ADC  10
 
 // ── Soil Temperature Offset ───────────────────────────────────────────────────
 // No DS18B20 probe — soil temp is estimated from air temperature.
