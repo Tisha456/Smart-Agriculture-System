@@ -145,16 +145,41 @@ async def evaluate_all_devices():
             print(f"[Decision Engine] {device_id}: error — {e}")
 
 
-async def evaluate_device(device_id: str, cfg: dict):
-    """
-    Safety gate, then mode evaluation.
+def automation_blocked_reason(
+    mode: str, offline: bool, stale_data: bool, sensor_flags: dict
+) -> Optional[str]:
+    """Why automation must not run this tick, or None to proceed.
 
-    The gate exists because sensor failures now report 0 instead of skipping
-    the telemetry tick (see esp32_firmware — sendTelemetry() no longer
-    early-returns on a bad DHT11 read). Without this gate, a disconnected
-    soil probe reading 0 would satisfy `0 < start_threshold` forever and the
-    pump would run continuously, re-triggering after every max-runtime cutoff.
+    Gated per MODE on the sensors that mode actually reads — NOT on the
+    global sensors_ok, which is (dht && soil). Neither mode reads temperature
+    or humidity, so a dead DHT11 must not disable irrigation:
+
+      MOISTURE — needs a trustworthy soil reading. A failed probe reports 0,
+                 which would satisfy `0 < start_threshold` forever and run
+                 the pump continuously, re-triggering after every
+                 max-runtime cutoff. This is the original safety gate.
+      TIMER    — needs no sensor at all. Rain is a bonus safety check inside
+                 evaluate_timer_mode, which already treats missing telemetry
+                 as "not raining".
+
+    A missing sensor_flags entry means older firmware that didn't report it;
+    treat as OK so upgrading the backend never silently stops automation.
+    Pure function so it is testable without Supabase — see test_automation.py.
     """
+    if offline:
+        return "device offline"
+
+    if mode == "MOISTURE":
+        if stale_data:
+            return "telemetry stale"
+        if sensor_flags.get("soil") is False:
+            return "soil probe not reporting"
+
+    return None
+
+
+async def evaluate_device(device_id: str, cfg: dict):
+    """Safety gate, then mode evaluation."""
     now = datetime.now(timezone.utc)
 
     status_resp = supabase_admin.table("device_status") \
@@ -173,15 +198,16 @@ async def evaluate_device(device_id: str, cfg: dict):
     if telemetry and telemetry.get("created_at"):
         stale_data = (now - _parse_ts(telemetry["created_at"])).total_seconds() > 60
 
-    sensors_ok = bool(status.get("sensors_ok")) if status else False
+    sensor_flags = (status.get("sensor_flags") or {}) if status else {}
+    mode = cfg.get("automation_mode", "NONE")
 
-    if offline or stale_data or not sensors_ok:
+    blocked = automation_blocked_reason(mode, offline, stale_data, sensor_flags)
+    if blocked:
         if cfg.get("pump_on"):
-            await queue_pump_command(device_id, "PUMP_OFF", "Safety: sensor data unavailable")
+            await queue_pump_command(device_id, "PUMP_OFF", f"Safety: {blocked}")
             _update_device_config(device_id, pump_on=False, pump_on_since=None)
         return
 
-    mode = cfg.get("automation_mode", "NONE")
     if mode == "MOISTURE":
         await evaluate_moisture_mode(device_id, cfg, telemetry)
     elif mode == "TIMER":
