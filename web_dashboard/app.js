@@ -113,6 +113,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  const cameraBackdrop = document.getElementById('cameraBackdrop');
+  if (cameraBackdrop) {
+    cameraBackdrop.addEventListener('click', (e) => {
+      if (e.target.id === 'cameraBackdrop') closeLiveCamera();
+    });
+  }
+
   window.addEventListener('resize', () => renderCanvasChart());
 
   // Re-evaluate connection state every 5s. This is required because going
@@ -1023,6 +1030,48 @@ function updateStopThreshold(val) {
 function updateMaxRuntime(val) {
   state.telemetry.maxRuntime = parseInt(val);
   updateTelemetryUI();
+}
+
+// ── Live Camera (ESP32-CAM relay via backend/main.py) ─────────────────────────
+async function openLiveCamera() {
+  const currentDev = state.devices[state.activeDeviceIndex];
+  if (!currentDev) {
+    showToast('No device connected. Bind a node first.', 'error');
+    return;
+  }
+
+  const backdrop = document.getElementById('cameraBackdrop');
+  const viewport = document.getElementById('cameraViewport');
+  viewport.innerHTML = '<p id="cameraStatus" style="font-size: 13px; color: var(--text-secondary);">Connecting…</p>';
+  backdrop.classList.add('active');
+
+  try {
+    const resp = await fetch(`${BACKEND_BASE}/api/camera/${currentDev.id}/token`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${state.currentUser.token}` }
+    });
+    if (!resp.ok) throw new Error(`Backend responded ${resp.status}`);
+    const { token } = await resp.json();
+
+    const img = document.createElement('img');
+    img.style.cssText = 'max-width: 100%; max-height: 60vh; border-radius: 6px;';
+    img.src = `${BACKEND_BASE}/api/camera/stream?t=${encodeURIComponent(token)}`;
+    img.alt = 'Live farm camera feed';
+    img.onerror = () => {
+      viewport.innerHTML = '<p style="font-size: 13px; color: var(--text-secondary);">No camera feed available. Is the ESP32-CAM powered on?</p>';
+    };
+    viewport.innerHTML = '';
+    viewport.appendChild(img);
+  } catch (err) {
+    viewport.innerHTML = `<p style="font-size: 13px; color: var(--rose-danger);">Could not start the camera feed: ${err.message}</p>`;
+  }
+}
+
+function closeLiveCamera() {
+  const viewport = document.getElementById('cameraViewport');
+  const img = viewport.querySelector('img');
+  if (img) img.src = '';   // actually tears down the stream connection, not just hides it
+  document.getElementById('cameraBackdrop').classList.remove('active');
 }
 
 function triggerSimulatedDrySpell() {

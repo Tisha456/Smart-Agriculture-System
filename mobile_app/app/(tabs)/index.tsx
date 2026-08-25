@@ -1,7 +1,8 @@
 import React, { useCallback, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, fontMono, spacing } from '../../theme/tokens';
+import { useAuth } from '../../hooks/useAuth';
 import { useDevices } from '../../hooks/useDevices';
 import { useDeviceLive } from '../../hooks/useDeviceLive';
 import { useDeviceControls } from '../../hooks/useDeviceControls';
@@ -12,7 +13,9 @@ import { StatTile } from '../../components/StatTile';
 import { Badge } from '../../components/Badge';
 import { Sparkline } from '../../components/Sparkline';
 import { Card } from '../../components/Card';
+import { Button } from '../../components/Button';
 import { ControlsPanel } from '../../components/ControlsPanel';
+import { getLiveCameraUrl } from '../../lib/camera';
 
 function timeAgo(ms: number | null): string {
   if (!ms) return '--';
@@ -34,11 +37,26 @@ function HealthRow({ label, value, tone }: { label: string; value: string; tone?
 }
 
 export default function DashboardScreen() {
+  const { session } = useAuth();
   const { devices, activeDevice, activeDeviceIndex, setActiveDeviceIndex, loading: devicesLoading, fetchDevices } =
     useDevices();
   const deviceId = activeDevice?.id ?? null;
   const live = useDeviceLive(deviceId);
   const controls = useDeviceControls(deviceId);
+
+  const [cameraLoading, setCameraLoading] = useState(false);
+  async function openLiveCamera() {
+    if (!deviceId || !session) return;
+    setCameraLoading(true);
+    try {
+      const url = await getLiveCameraUrl(deviceId, session.access_token);
+      await Linking.openURL(url);
+    } catch (err: any) {
+      Alert.alert('Live camera failed', err?.message ?? 'Could not reach the camera relay.');
+    } finally {
+      setCameraLoading(false);
+    }
+  }
 
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = useCallback(async () => {
@@ -158,6 +176,17 @@ export default function DashboardScreen() {
           <HealthRow label="IP" value={live.presence.ipAddress ?? '--'} />
         </Card>
 
+        <Text style={styles.sectionTitle}>FIELD CAMERA</Text>
+        <Card style={styles.cameraCard}>
+          <Button
+            label="LIVE CAMERA"
+            variant="secondary"
+            onPress={openLiveCamera}
+            loading={cameraLoading}
+            disabled={!hasDevice}
+          />
+        </Card>
+
         <ControlsPanel controls={controls} hasDevice={hasDevice} />
       </ScrollView>
     </SafeAreaView>
@@ -193,6 +222,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   historyCard: { marginBottom: spacing.lg },
+  cameraCard: { marginBottom: spacing.lg },
   healthRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

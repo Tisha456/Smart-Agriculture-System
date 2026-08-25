@@ -17,18 +17,24 @@ Endpoints:
   - GET    /api/devices                     — list devices for logged-in user (unused by website; kept for API completeness)
   - DELETE /api/devices/{id}                — unbind (unused by website; kept for API completeness)
   - POST   /api/timers, GET/{id}, DELETE/{id}, PATCH/{id} — timer schedule CRUD
-  - POST   /api/plant/predict               — proxy to the plant-disease serving API
-                                               (serving/app.py). Holds PLANT_API_KEY
-                                               server-side so the app/website never see it.
+  - POST   /api/plant/predict               — plant photo diagnosis. Auth required. Uses the
+                                               trained serving API (serving/app.py) if
+                                               PLANT_API_URL/PLANT_API_KEY are set, otherwise
+                                               falls back to Gemini vision. Whichever key is
+                                               used stays server-side.
   - POST   /api/advisor/ask                 — proxy to Gemini, grounded in the device's
                                                live telemetry. Holds GEMINI_API_KEY server-side.
                                                Auth required.
+  - POST   /api/camera/{id}/frame           — ESP32-CAM uploads one JPEG. Auth: X-Cam-Key.
+  - GET    /api/camera/{id}/wanted          — ESP32-CAM polls whether anyone is watching.
+  - POST   /api/camera/{id}/token           — mint a short-lived viewer token. Auth required.
+  - GET    /api/camera/stream               — MJPEG stream for a token from the above.
 """
 
-from fastapi import FastAPI, HTTPException, Header, UploadFile, File
+from fastapi import FastAPI, HTTPException, Header, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from supabase import create_client, Client
@@ -37,6 +43,10 @@ from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 import os
 import asyncio
+import base64
+import json
+import secrets
+import time
 import httpx
 
 # ── Load Environment Variables ──────────────────────────────────────────────
@@ -57,6 +67,18 @@ PLANT_API_KEY = os.getenv("PLANT_API_KEY")
 # returns the key to the client.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+
+# ESP32-CAM live view. The camera authenticates with this shared secret (it
+# has no user login, same idea as PLANT_API_KEY); browsers/app authenticate
+# with a short-lived token minted below instead, since an <img src> can't
+# send an Authorization header. Frames are held in memory only — never
+# written to Supabase or disk.
+CAM_UPLOAD_KEY = os.getenv("CAM_UPLOAD_KEY")
+_camera_frames: dict[str, tuple[bytes, float]] = {}    # device_id -> (jpeg, ts)
+_camera_watchers: dict[str, float] = {}                # device_id -> last viewer tick
+_camera_tokens: dict[str, tuple[str, float]] = {}       # token -> (device_id, expires_at)
+CAMERA_TOKEN_TTL_S = 600
+CAMERA_WANTED_WINDOW_S = 15
 
 # Anon client: only used to validate a user's JWT (auth.get_user). Never used
 # for table reads/writes — this server has no logged-in session, so RLS
@@ -574,35 +596,157 @@ def delete_timer(timer_id: int, authorization: str = Header(...)):
     return {"status": "timer deleted"}
 
 
-# ── Website/App: Plant disease diagnosis (proxy) ──────────────────────────────
+# ── Website/App: Plant disease diagnosis ──────────────────────────────────────
+# The ONNX model in ml/ isn't trained/exported yet, so this defaults to a
+# Gemini vision call instead of the (unconfigured) Cloud Run serving API.
+# Set PLANT_API_URL/PLANT_API_KEY later to switch back to the real model —
+# no other code needs to change.
+PLANT_DIAGNOSIS_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "is_plant": {"type": "BOOLEAN"},
+        "species": {"type": "STRING"},
+        "species_confidence": {"type": "NUMBER"},
+        "condition": {"type": "STRING"},
+        "condition_confidence": {"type": "NUMBER"},
+        "healthy": {"type": "BOOLEAN"},
+        "severity": {"type": "STRING", "enum": ["none", "mild", "moderate", "severe"]},
+        "affected_area_pct": {"type": "INTEGER"},
+        "symptoms": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "cause": {"type": "STRING"},
+        "treatment": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "prevention": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "notes": {"type": "STRING"},
+    },
+    "required": [
+        "is_plant", "species", "species_confidence", "condition", "condition_confidence",
+        "healthy", "severity", "affected_area_pct", "symptoms", "cause",
+        "treatment", "prevention", "notes",
+    ],
+}
+
+PLANT_DIAGNOSIS_PROMPT = """You are an agronomist helping a smallholder farmer in India diagnose a \
+plant photo. Look closely at the leaf/plant in the image and respond ONLY with JSON matching the \
+given schema, no other text.
+
+Rules:
+- If the photo does not show a plant/leaf at all, set is_plant to false and put your best guess of \
+what it actually shows in notes; still fill every other field with reasonable placeholders \
+(species "unknown", condition "unknown", healthy false, severity "none", affected_area_pct 0, \
+empty arrays for symptoms/treatment/prevention, cause "unknown").
+- Prefer common PlantVillage-style names, e.g. species "tomato", condition "early_blight" or "healthy".
+- severity: "none" if healthy, otherwise "mild"/"moderate"/"severe" based on how much of the \
+plant/leaf is visibly affected.
+- affected_area_pct: your estimate of the percent of the visible leaf/plant area showing symptoms.
+- symptoms: short phrases describing what you actually see (e.g. "yellow halo around brown spots").
+- cause: one of fungal, bacterial, viral, pest, nutrient_deficiency, abiotic_stress, or unknown.
+- treatment/prevention: concrete, actionable steps a smallholder farmer could do this week.
+- species_confidence/condition_confidence: your honest 0-1 confidence, be conservative on blurry \
+or ambiguous photos.
+- notes: one short sentence with any caveat (e.g. blurry photo, multiple leaves, early stage)."""
+
+
 @app.post("/api/plant/predict")
-async def plant_predict(file: UploadFile = File(...)):
+async def plant_predict(file: UploadFile = File(...), authorization: str = Header(...)):
     """
-    Proxy an uploaded photo to the plant-disease serving API and return its
-    JSON diagnosis unchanged. This is the ONLY thing the app/website call for
-    "upload photo -> get diagnosis" — the plant API's X-API-Key never leaves
-    this server (see plant-disease-implementation-plan.md Phase J).
+    Diagnose an uploaded plant photo. This is the ONLY thing the app/website
+    call for "upload photo -> get diagnosis" — whichever backend key
+    (PLANT_API_KEY or GEMINI_API_KEY) it uses never leaves this server.
     """
-    if not PLANT_API_URL or not PLANT_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="Plant diagnosis is not configured on this server (PLANT_API_URL/PLANT_API_KEY missing).",
-        )
+    token = authorization.replace("Bearer ", "")
+    user = _get_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     contents = await file.read()
+
+    # Real trained model, once PLANT_API_URL/PLANT_API_KEY are configured.
+    if PLANT_API_URL and PLANT_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{PLANT_API_URL}/predict",
+                    headers={"X-API-Key": PLANT_API_KEY},
+                    files={"file": (file.filename, contents, file.content_type)},
+                )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"Could not reach plant diagnosis API: {e}")
+
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        return resp.json()
+
+    # Fallback: Gemini vision.
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Plant diagnosis is not configured on this server (GEMINI_API_KEY missing).",
+        )
+
+    if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
+        raise HTTPException(status_code=415, detail="Only JPEG, PNG or WEBP photos are supported.")
+
+    if len(contents) > 6_000_000:
+        raise HTTPException(status_code=413, detail="Photo is too large (max ~6MB).")
+
+    body = {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": PLANT_DIAGNOSIS_PROMPT},
+                {"inlineData": {"mimeType": file.content_type, "data": base64.b64encode(contents).decode()}},
+            ],
+        }],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": PLANT_DIAGNOSIS_SCHEMA,
+            "temperature": 0.2,
+            "maxOutputTokens": 2048,
+        },
+    }
+
+    start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                f"{PLANT_API_URL}/predict",
-                headers={"X-API-Key": PLANT_API_KEY},
-                files={"file": (file.filename, contents, file.content_type)},
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+                params={"key": GEMINI_API_KEY},
+                json=body,
             )
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Could not reach plant diagnosis API: {e}")
+        raise HTTPException(status_code=502, detail=f"Could not reach Gemini: {e}")
 
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return resp.json()
+
+    data = resp.json()
+    candidates = data.get("candidates") or []
+    parts = candidates[0].get("content", {}).get("parts") if candidates else None
+    if not parts:
+        raise HTTPException(status_code=502, detail="Gemini returned no diagnosis for this photo.")
+
+    try:
+        diagnosis = json.loads(parts[0]["text"])
+    except (KeyError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=502, detail=f"Gemini returned malformed diagnosis: {e}")
+
+    inference_ms = int((time.perf_counter() - start) * 1000)
+    return finalize_plant_diagnosis(diagnosis, GEMINI_MODEL, inference_ms)
+
+
+def finalize_plant_diagnosis(diagnosis: dict, model_version: str, inference_ms: int) -> dict:
+    """Fill in the fields Gemini doesn't (and shouldn't) self-report. Pure
+    function so it's testable without booting FastAPI/Supabase — see
+    backend/test_plant_predict.py."""
+    species_confidence = diagnosis.get("species_confidence", 0) or 0
+    condition_confidence = diagnosis.get("condition_confidence", 0) or 0
+    joint_confidence = species_confidence * condition_confidence
+
+    diagnosis["joint_confidence"] = joint_confidence
+    diagnosis["low_confidence"] = (not diagnosis.get("is_plant", True)) or joint_confidence < 0.45
+    diagnosis["model_version"] = f"gemini:{model_version}"
+    diagnosis["inference_ms"] = inference_ms
+    return diagnosis
 
 
 # ── Website/App: Farm advisor chat (proxy to Gemini) ──────────────────────────
@@ -689,6 +833,95 @@ async def advisor_ask(payload: AdvisorPayload, authorization: str = Header(...))
 
     answer = candidates[0]["content"]["parts"][0]["text"]
     return {"answer": answer}
+
+
+# ── ESP32-CAM: live farm view ──────────────────────────────────────────────
+# The camera reuses the sensor node's device_id (e.g. "AGS-0001") instead of
+# being its own paired device — it's "the camera on that field node", not a
+# separate thing to pair/own/count against the 4-device limit.
+MAX_CAMERA_DEVICES = 32
+MAX_FRAME_BYTES = 200_000
+
+
+@app.post("/api/camera/{device_id}/frame")
+async def camera_upload_frame(device_id: str, request: Request, x_cam_key: str = Header(...)):
+    """ESP32-CAM pushes one JPEG. Returns whether anyone is currently
+    watching, so the camera can decide to keep streaming or go idle —
+    piggybacking that on the upload response avoids a separate control
+    channel back to the device."""
+    if not CAM_UPLOAD_KEY:
+        raise HTTPException(status_code=503, detail="Camera relay is not configured on this server (CAM_UPLOAD_KEY missing).")
+    if x_cam_key != CAM_UPLOAD_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if device_id not in _camera_frames and len(_camera_frames) >= MAX_CAMERA_DEVICES:
+        raise HTTPException(status_code=503, detail="Too many camera devices already active.")
+
+    body = await request.body()
+    if len(body) > MAX_FRAME_BYTES:
+        raise HTTPException(status_code=413, detail="Frame too large.")
+
+    _camera_frames[device_id] = (body, time.time())
+    wanted = (time.time() - _camera_watchers.get(device_id, 0)) < CAMERA_WANTED_WINDOW_S
+    return {"wanted": wanted}
+
+
+@app.get("/api/camera/{device_id}/wanted")
+async def camera_wanted(device_id: str, x_cam_key: str = Header(...)):
+    """Same signal as above, for an idle camera with no frame to upload."""
+    if not CAM_UPLOAD_KEY:
+        raise HTTPException(status_code=503, detail="Camera relay is not configured on this server (CAM_UPLOAD_KEY missing).")
+    if x_cam_key != CAM_UPLOAD_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    wanted = (time.time() - _camera_watchers.get(device_id, 0)) < CAMERA_WANTED_WINDOW_S
+    return {"wanted": wanted}
+
+
+@app.post("/api/camera/{device_id}/token")
+async def camera_token(device_id: str, authorization: str = Header(...)):
+    """Mint a short-lived viewer token. A plain <img src="..."> can't send an
+    Authorization header, so the stream carries its credential in the query
+    string instead — this is the one route that still checks the real JWT
+    and device ownership, same as every other route in this file."""
+    token = authorization.replace("Bearer ", "")
+    user = _get_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    _assert_owns_device(user.id, device_id)
+
+    cam_token = secrets.token_urlsafe(24)
+    _camera_tokens[cam_token] = (device_id, time.time() + CAMERA_TOKEN_TTL_S)
+    return {"token": cam_token}
+
+
+@app.get("/api/camera/stream")
+async def camera_stream(t: str):
+    entry = _camera_tokens.get(t)
+    if not entry or entry[1] < time.time():
+        raise HTTPException(status_code=401, detail="Invalid or expired camera token.")
+    device_id = entry[0]
+
+    async def mjpeg():
+        last_ts = 0.0
+        idle_ticks = 0
+        while idle_ticks < 130:            # ~20s of no fresh frame at 150ms/tick
+            _camera_watchers[device_id] = time.time()
+            frame = _camera_frames.get(device_id)
+            if frame and frame[1] != last_ts:
+                last_ts = frame[1]
+                idle_ticks = 0
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(frame[0])).encode() + b"\r\n\r\n"
+                    + frame[0] + b"\r\n"
+                )
+            else:
+                idle_ticks += 1
+            await asyncio.sleep(0.15)
+
+    return StreamingResponse(mjpeg(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
 # ── Mount Static Files (MUST be last — after all API routes) ─────────────────

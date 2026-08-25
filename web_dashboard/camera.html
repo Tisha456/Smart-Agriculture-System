@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgriSense AI — Live Camera</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #04120b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, sans-serif;
+    }
+    img {
+      max-width: 100%;
+      max-height: 100vh;
+    }
+    p {
+      color: #9fb0a6;
+      font-size: 14px;
+      text-align: center;
+      padding: 0 1.5rem;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Standalone page, not part of the SPA in index.html. Reads ?t=<token>
+       (minted by POST /api/camera/{device_id}/token) and points an <img> at
+       the MJPEG stream. An <img> is used instead of loading the stream
+       directly in the top-level document because multipart/x-mixed-replace
+       renders reliably there on both Android and iOS. -->
+  <div id="root">
+    <p>No camera token provided.</p>
+  </div>
+  <script>
+    const token = new URLSearchParams(location.search).get('t');
+    const root = document.getElementById('root');
+    if (token) {
+      const img = document.createElement('img');
+      img.src = `/api/camera/stream?t=${encodeURIComponent(token)}`;
+      img.alt = 'Live farm camera feed';
+      img.onerror = () => {
+        root.innerHTML = '<p>Could not load the camera feed. The link may have expired — go back and tap Live Camera again.</p>';
+      };
+      root.innerHTML = '';
+      root.appendChild(img);
+    }
+  </script>
+</body>
+
+</html>

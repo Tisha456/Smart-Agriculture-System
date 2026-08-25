@@ -1,115 +1,186 @@
-# 🌱 AgriSense AI 
+# 🌱 AgriSense AI
 
 **An AI-Powered Smart Agriculture Decision Support System**
 
-AgriSense AI is a full-stack smart agriculture platform that unifies IoT sensor telemetry, computer-vision-based crop disease detection, and Large Language Model (LLM) reasoning into a single cohesive system. It helps farmers monitor field conditions in real-time, automates irrigation, and provides context-aware, personalized agronomic recommendations.
+AgriSense AI unifies IoT sensor telemetry, automated irrigation, plant disease
+detection and LLM reasoning into one system. Farmers monitor field conditions live,
+irrigation runs itself, a leaf photo returns a diagnosis, and a chat assistant answers
+questions grounded in that farm's actual sensor readings.
 
 ---
 
-## 🎯 Executive Summary
+## ✨ What it does
 
-Smallholder and mid-scale farmers frequently lack affordable, real-time visibility into their field conditions. Generic advice often fails to account for a specific farm's live sensor readings, weather forecast, or crop history.
+### 📡 Live environmental monitoring
+Temperature, humidity, soil moisture and rainfall from the field, every 10 seconds.
+The ESP32 writes **directly to Supabase**; clients subscribe via Supabase Realtime, so
+telemetry and manual pump control keep working even with the backend stopped.
 
-**AgriSense AI solves this through a closed-loop system:**
-1. **IoT Field Nodes (ESP32)** continuously report environmental data.
-2. **Automated Irrigation** triggers water pumps based on soil moisture and weather forecasts.
-3. **Computer Vision (EfficientNet)** identifies crop diseases from farmer-uploaded leaf images.
-4. **Decision Engine (LLM)** combines vision output, live sensor data, and weather forecasts into a structured context to generate highly specific, farm-relevant guidance.
+### 💧 Automated irrigation
+A decision engine in the backend ticks every 10 s and runs the pump on either soil
+moisture thresholds or a timer schedule. It is rain-aware (skips watering when the rain
+sensor trips) and has a max-runtime cutoff.
 
-> **The Core AI Philosophy**: We train one high-quality computer vision model for the narrow task of plant/disease identification, and delegate broader reasoning (fertilizer choice, pesticide advice, irrigation timing) to a general-purpose LLM fed with real-time farm context.
+A safety gate comes first: failed sensors report `0` rather than skipping a tick, so
+without the gate a disconnected probe reading `0` would satisfy `soil < threshold`
+forever and run the pump continuously.
+
+### 🍃 Plant disease detection
+Photograph a leaf, get back species, condition, severity, affected area %, symptoms,
+likely cause, treatment and prevention steps.
+
+The backend selects its inference source at request time: the trained ONNX model
+service when `PLANT_API_URL` is configured, otherwise **Gemini vision** with a strict
+JSON response schema. See [Model status](#-model-status) below.
+
+### 🎥 Live field camera
+A separate ESP32-CAM streams the field to the app and dashboard. Frames relay through
+the backend rather than the local network, so the feed works from **any** network with
+no router or port-forwarding setup.
+
+### 🧠 Context-aware farm advisor
+A chat assistant that receives the device's latest telemetry in its system instruction,
+so answers reflect current field conditions. The Plant Scan screen can hand a diagnosis
+straight into the chat.
+
+### 🔐 Device and account security
+Devices pair with a serial + secret, gated on the board being powered on at pairing
+time. Row-level security scopes every table to the owning account, up to 4 devices each.
+All API keys stay server-side — clients call this backend, never the upstream provider.
 
 ---
 
-## ✨ Key Features
+## 🏗️ Architecture
 
-### 📡 Real-Time Environmental Monitoring
-* Continuously captures **temperature, humidity, soil moisture, and rainfall** from the field.
-* Displays live telemetry via WebSocket to the Next.js web dashboard and React Native mobile app.
-* Buffers data locally on the ESP32 during connectivity drops to ensure no data loss.
-
-### 💧 Smart Automated Irrigation
-* Triggers water pumps automatically when soil moisture falls below user-configured thresholds.
-* **Weather & Rain Aware**: The system checks live rain sensors and short-term weather forecasts. If rain is falling or expected within 24 hours, irrigation is paused to conserve water.
-* Supports manual overrides from the dashboard or mobile app.
-
-### 🍃 AI Crop Disease Detection
-* Farmers can snap a photo of a leaf to receive an automated **Plant + Disease + Confidence** classification.
-* Powered by a custom-trained **EfficientNet (B3/B4)** model.
-
-### 🧠 Context-Aware LLM Recommendations
-* The **Decision Engine** merges the disease prediction with live sensor readings, weather forecasts, and farm history.
-* This structured context is sent to an LLM (Gemini/Claude/GPT) to produce specific fertilizer, pesticide, and irrigation guidance tailored *exactly* to what is happening on the farm right now.
-* Features a **conversational AI assistant** that farmers can chat with for follow-up questions.
-
-### 🔐 Secure Device & Account Architecture
-* Strict separation between **Device Identity** (Hardware ID + Password) and **Farmer Identity** (Email + Password via Supabase Auth).
-* Supports up to 4 devices per farmer account with absolute data isolation between different farmers.
-
----
-
-## 🏗️ System Architecture
-
-AgriSense AI is composed of five cooperating layers:
-
-1. **Field / IoT**: ESP32, DHT22, soil moisture probe, rain sensor, relay, OLED.
-2. **Backend / API**: FastAPI (Python) exposing REST endpoints and WebSocket channels.
-3. **Data**: PostgreSQL (hosted on Supabase) and Supabase Storage for images.
-4. **AI / Reasoning**: EfficientNet (PyTorch) for Vision + Gemini/Claude/GPT for the Decision Engine.
-5. **Client**: Next.js (Web) and React Native/Expo (Mobile).
+The important decision: **the ESP32 talks directly to Supabase, not through the
+backend.** The backend is required only for pump automation, plant diagnosis, the
+advisor and the camera relay.
 
 ```text
-ESP32 (Sensors + Relay) 
-       │
-       ▼
-FastAPI Backend ──▶ PostgreSQL (Supabase)
-       │
-       ├─▶ WebSocket Broadcast ──▶ Web Dashboard & Mobile App
-       │
-       └─▶ Decision Engine (Sensors + Weather + Vision) ──▶ LLM ──▶ Recommendation
+ESP32 DevKit V1                Supabase (Postgres)          App / Dashboard
+  DHT11    GPIO 4  ─┐
+  Soil     GPIO 34 ─┼─► telemetry_data  ──── Realtime ────►  live UI
+  Rain     GPIO 33 ─┘    device_status
+  Relay    GPIO 16 ◄──── device_commands ◄─────────────────  pump control
+                                 ▲
+                                 │ service-role
+                        ┌────────┴────────┐
+ESP32-CAM ──JPEG──────► │ FastAPI backend │ ──► Gemini (vision + advisor chat)
+          ◄─"wanted"──  │  backend/main.py│ ──► ONNX model service (when trained)
+          ──MJPEG─────► └─────────────────┘
+```
+
+| Layer | Directory | Stack |
+|---|---|---|
+| Sensor firmware | `esp32_firmware/AgriSense_ESP32/` | ESP32 DevKit V1, Arduino C++ |
+| Camera firmware | `esp32_firmware/AgriSense_ESP32CAM/` | AI-Thinker ESP32-CAM |
+| Backend API | `backend/` | Python 3.11, FastAPI, deployed on Render |
+| Web dashboard | `web_dashboard/` | Vanilla HTML/CSS/JS, served by the backend |
+| Mobile app | `mobile_app/` | Expo 54, expo-router, React Native, TypeScript |
+| Database & auth | Supabase | PostgreSQL, Auth, Realtime, RLS |
+| ML training | `ml/` | Ultralytics YOLO11-cls, ONNX export |
+| ML serving | `serving/` | FastAPI + onnxruntime |
+
+Full walkthrough: **[documents/WORKFLOW.md](documents/WORKFLOW.md)**
+
+---
+
+## 🔩 Hardware
+
+Two separate boards — they are not wired together, they just share Wi-Fi.
+
+**Sensor node** (ESP32 DevKit V1):
+
+| Component | Pin | Note |
+|---|---|---|
+| DHT11 (temp + humidity) | GPIO 4 | needs 10k pull-up |
+| Soil moisture AOUT | GPIO 34 | ADC1, input-only |
+| Rain sensor DO | GPIO 33 | active-LOW |
+| Relay IN | GPIO 16 | active-LOW (LOW = pump ON) |
+
+**Camera node** (AI-Thinker ESP32-CAM) — must be a second board: the OV2640 interface
+occupies GPIO 34 (the soil ADC), GPIO 4 (flash LED) and GPIO 16 (PSRAM CS), and leaves
+no ADC1 pin free. Wiring details in `esp32_firmware/WIRING_GUIDE.md`.
+
+---
+
+## 🧠 Model status
+
+Honest summary, because the two are easy to conflate:
+
+- **The deployed Plant Scan runs on Gemini vision.** `PLANT_API_URL` / `PLANT_API_KEY`
+  are unset, so `/api/plant/predict` uses the LLM fallback with a strict JSON schema.
+- **The two-stage classifier in `ml/` is not trained to completion.** The full pipeline
+  exists — acquisition, deduplication against the held-out test set, taxonomy
+  unification, two-stage training, ONNX export, serving — but producing production
+  weights needs ~13 GB of data and a GPU budget we did not have before the deadline.
+- **A minimal baseline is reproducible in ~20 minutes.**
+  `ml/notebooks/AgriSense_Minimal_Train_Colab.ipynb` trains PlantVillage only for a few
+  epochs and emits real training logs, curves, a confusion matrix and an exported ONNX
+  into `ml/artifacts/stage1_minimal/`.
+
+Swapping the trained model in is an environment change, not a code change: deploy
+`serving/`, set `PLANT_API_URL` + `PLANT_API_KEY`, done.
+
+Datasets, licences and the train/test contamination handling:
+**[documents/DATASETS.md](documents/DATASETS.md)**
+
+---
+
+## 🚀 Getting started
+
+### Backend
+
+```bash
+cd backend
+pip install -r requirements.txt
+cp .env.example .env        # then fill in the values
+uvicorn main:app --reload   # dashboard served at http://localhost:8000/
+```
+
+Required: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`.
+Optional: `GEMINI_API_KEY` (plant scan + advisor), `CAM_UPLOAD_KEY` (live camera),
+`PLANT_API_URL`/`PLANT_API_KEY` (trained model). Each optional feature returns 503
+without its key; everything else keeps working.
+
+### Mobile app
+
+```bash
+cd mobile_app
+npm install
+cp .env.example .env        # set EXPO_PUBLIC_BACKEND_URL to your backend
+npx expo start
+```
+
+### Database
+
+Run `documents/Supabase_Complete_Setup.md`, then
+`documents/supabase_presence_and_pairing.sql` in the Supabase SQL editor.
+
+### Firmware
+
+Open the `.ino` in Arduino IDE, edit the CONFIGURATION block at the top (Wi-Fi
+credentials, device ID, and `CAM_UPLOAD_KEY` for the camera), select the board
+(`ESP32 Dev Module` / `AI Thinker ESP32-CAM`), upload.
+
+---
+
+## 🧪 Tests
+
+```bash
+cd backend && python test_plant_predict.py && python test_camera.py
+cd ml && python -m pytest tests/
+cd mobile_app && npx tsc --noEmit
 ```
 
 ---
 
-## 🛠️ Technology Stack
+## 📚 Documentation
 
-| Category | Technology |
-|---|---|
-| **IoT / Firmware** | ESP32, C++/Arduino, PlatformIO |
-| **Backend API** | Python 3.11+, FastAPI, Uvicorn |
-| **Database & Auth** | PostgreSQL, Supabase Auth, Supabase Storage |
-| **Machine Learning** | PyTorch, EfficientNet (Trained on Colab/Kaggle) |
-| **Reasoning Engine** | Gemini / Claude / OpenAI API |
-| **Web Client** | React, Next.js, CSS3 Grid |
-| **Mobile Client** | React Native, Expo |
-
----
-
-## 📚 Documentation Directory
-
-For deep technical details, refer to the original specification documents located in the `documents/` folder:
-
-1. **[Product Requirements Document (PRD)](documents/AgriSense_AI_PRD.docx)**: The authoritative source of truth for the scope, features, non-functional requirements, and personas.
-2. **[System Workflow & Functioning](documents/AgriSense_AI_Workflow_and_Functioning.docx)**: An operational walkthrough of how data flows from sensors to the LLM and back to the farmer.
-3. **[AI Model Development Guide](documents/AgriSense_AI_Model_Development_Guide.docx)**: The AI strategy, explaining the split between the PyTorch EfficientNet CV model and the LLM reasoning layer, including training methodology.
-4. **[Implementation Plan](documents/AgriSense_AI_Implementation_Plan.docx)**: The phased engineering roadmap, deployment steps, and testing matrix.
-5. **[Device Connectivity Architecture](documents/AgriSense_AI_Device_Connectivity_Architecture.md)**: Details the dual-identity system ensuring secure device binding and multi-tenant data isolation.
-
----
-
-## 🚀 Getting Started (Local Development)
-
-1. **Environment Setup**: 
-   - Provision a Supabase project (Auth, Database, Storage).
-   - Obtain API keys for OpenWeather and your chosen LLM provider.
-2. **Backend Config**:
-   - Clone the repo and populate your `.env` file based on `.env.example`.
-   - Run the FastAPI server using `uvicorn`.
-3. **Client Config**:
-   - Navigate to the web/mobile directories and run `npm install` followed by `npm run dev` to start the frontend.
-4. **Hardware**:
-   - Flash the ESP32 firmware using PlatformIO/Arduino IDE after updating the Wi-Fi and backend URL constants.
-
-*(Refer to the Implementation Plan for detailed phase-by-phase build instructions.)*
+- **[WORKFLOW.md](documents/WORKFLOW.md)** — how the whole system fits together
+- **[DATASETS.md](documents/DATASETS.md)** — every dataset, licence, and why
+- **[Supabase_Complete_Setup.md](documents/Supabase_Complete_Setup.md)** — schema and RLS
+- **[WIRING_GUIDE.md](esp32_firmware/WIRING_GUIDE.md)** — pin-by-pin hardware wiring
 
 ---
 *AgriSense AI — Cultivating intelligence for the modern smallholder farm.*

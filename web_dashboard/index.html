@@ -346,6 +346,10 @@
               <span class="material-symbols-outlined">warning</span>
               Simulate Dry Event
             </button>
+            <button class="btn-secondary" onclick="openLiveCamera()">
+              <span class="material-symbols-outlined">videocam</span>
+              Live Camera
+            </button>
           </div>
         </div>
 
@@ -996,6 +1000,22 @@
           <button class="btn-secondary" onclick="closeModal()">Cancel</button>
           <button class="btn-primary" style="background: var(--rose-danger); color: #fff; width: auto;"
             id="modalConfirmBtn" onclick="confirmModalAction()">Confirm Action</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Camera Overlay -->
+    <div class="modal-backdrop" id="cameraBackdrop">
+      <div class="modal-box" style="max-width: 720px;">
+        <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 0.75rem;">
+          <span class="material-symbols-outlined" style="vertical-align: middle; color: var(--green-primary);">videocam</span>
+          Live Camera
+        </h3>
+        <div id="cameraViewport" style="background: #04120b; border-radius: 8px; overflow: hidden; min-height: 240px; display: flex; align-items: center; justify-content: center;">
+          <p id="cameraStatus" style="font-size: 13px; color: var(--text-secondary);">Connecting…</p>
+        </div>
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.25rem;">
+          <button class="btn-secondary" onclick="closeLiveCamera()">Close</button>
         </div>
       </div>
     </div>

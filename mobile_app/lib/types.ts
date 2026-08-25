@@ -91,6 +91,8 @@ export interface ChatMessage {
   text: string;
 }
 
+export type PlantSeverity = 'none' | 'mild' | 'moderate' | 'severe';
+
 export interface PlantDiagnosis {
   species: string;
   species_confidence: number;
@@ -100,6 +102,17 @@ export interface PlantDiagnosis {
   low_confidence: boolean;
   model_version: string;
   inference_ms: number;
+  // Present only from the Gemini fallback path (see backend/main.py
+  // /api/plant/predict) — the trained serving API doesn't return these yet.
+  is_plant?: boolean;
+  healthy?: boolean;
+  severity?: PlantSeverity;
+  affected_area_pct?: number;
+  symptoms?: string[];
+  cause?: string;
+  treatment?: string[];
+  prevention?: string[];
+  notes?: string;
 }
 
 export const ALL_DAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'] as const;

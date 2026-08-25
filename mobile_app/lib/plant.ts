@@ -15,7 +15,7 @@ function requireBackend() {
 
 // `photoUri` is whatever expo-image-picker's result.assets[0].uri gives you
 // (a local file:// / content:// URI on-device).
-export async function diagnosePlant(photoUri: string): Promise<PlantDiagnosis> {
+export async function diagnosePlant(photoUri: string, token: string): Promise<PlantDiagnosis> {
   requireBackend();
 
   const filename = photoUri.split('/').pop() || 'photo.jpg';
@@ -31,6 +31,7 @@ export async function diagnosePlant(photoUri: string): Promise<PlantDiagnosis> {
 
   const resp = await fetch(`${BACKEND_BASE}/api/plant/predict`, {
     method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
 
