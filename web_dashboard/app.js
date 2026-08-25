@@ -33,6 +33,7 @@ const state = {
   telemetry: {
     hasData: false,          // false until first real packet from ESP32
     lastDataMs: null,        // timestamp of last received telemetry
+    lastRowAt: null,         // created_at of that row — dedupes the poll's re-reads
     soilMoisture: 0,
     temperature: 0,
     tempUnit: 'C',
@@ -126,6 +127,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // OFFLINE produces no database event to react to — only the passage of
   // time (no heartbeat for OFFLINE_AFTER_MS) tells us the ESP32 died.
   presenceTickerHandle = setInterval(() => {
+    // Re-read from the database, not just re-render cached state — Realtime
+    // can silently stop delivering (see refreshDeviceData).
+    const dev = state.devices[state.activeDeviceIndex];
+    if (dev) refreshDeviceData(dev.id);
     updateTelemetryUI();
     updateHeaderStatusPill();
   }, 5000);
@@ -365,6 +370,65 @@ async function fetchUserDevices() {
   }
 }
 
+// Apply one telemetry row to state + UI. Shared by the Realtime INSERT
+// handler and the polling fallback so the two can never drift apart.
+// `created_at` is tracked because the poll re-reads the same latest row
+// repeatedly — without that guard it would push duplicates into the chart.
+function applyTelemetryRow(data) {
+  if (!data) return;
+  const rowAt = data.created_at || null;
+  const isNewRow = rowAt !== state.telemetry.lastRowAt;
+
+  state.telemetry.hasData = true;
+  state.telemetry.lastDataMs = Date.now();
+  state.telemetry.lastRowAt = rowAt;
+
+  state.telemetry.soilMoisture   = data.soil_moisture   || 0;
+  state.telemetry.temperature    = data.temperature     || 0;
+  state.telemetry.humidity       = data.humidity        || 0;
+  state.telemetry.soilTemp       = data.soil_temp       || 0;
+  state.telemetry.solarRadiation = data.solar_radiation || 0;
+  state.telemetry.rainDetected   = !!data.rain_detected;
+  state.telemetry.battery        = data.battery_pct     || 100;
+  state.telemetry.signal         = data.rssi            || -70;
+
+  if (isNewRow) {
+    const buf = state.analytics.buffer;
+    buf.soil.shift();  buf.soil.push(Math.round(data.soil_moisture || 0));
+    buf.temp.shift();  buf.temp.push(Number((data.temperature || 0).toFixed(1)));
+    buf.humid.shift(); buf.humid.push(Math.round(data.humidity || 0));
+    buf.solar.shift(); buf.solar.push(Math.round(data.solar_radiation || 0));
+    renderCanvasChart();
+  }
+
+  updateTelemetryUI();
+}
+
+// Re-read the latest heartbeat and the latest telemetry row.
+// Realtime is the fast path, but it can silently deliver nothing (channel
+// subscribed before the auth token applied, socket dropped on sleep/tab
+// switch). Polling this means the page is never more than one ESP32 tick
+// stale, instead of needing a manual refresh.
+function refreshDeviceData(deviceId) {
+  if (!supabaseClient || !deviceId) return;
+
+  supabaseClient
+    .from('device_status')
+    .select('last_seen_at, sensors_ok, sensor_flags, firmware_version, ip_address, rssi, boot_count')
+    .eq('device_id', deviceId)
+    .maybeSingle()
+    .then(({ data }) => { if (data) applyPresenceRow(data); });
+
+  supabaseClient
+    .from('telemetry_data')
+    .select('*')
+    .eq('device_id', deviceId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+    .then(({ data }) => { if (data) applyTelemetryRow(data); });
+}
+
 function subscribeToDeviceRealtime(deviceId) {
   // Remove old channels if switching devices
   if (activeRealtimeChannel) {
@@ -385,16 +449,8 @@ function subscribeToDeviceRealtime(deviceId) {
   updateTelemetryUI();
   updateHeaderStatusPill();
 
-  // One-shot fetch of the last known heartbeat, so a page refresh reflects
-  // reality immediately instead of showing OFFLINE until the next tick.
-  supabaseClient
-    .from('device_status')
-    .select('last_seen_at, sensors_ok, sensor_flags, firmware_version, ip_address, rssi, boot_count')
-    .eq('device_id', deviceId)
-    .maybeSingle()
-    .then(({ data }) => {
-      if (data) applyPresenceRow(data);
-    });
+  // Initial load + polling fallback, both below.
+  refreshDeviceData(deviceId);
 
   // Subscribe to new rows in telemetry_data for this device
   activeRealtimeChannel = supabaseClient
@@ -407,31 +463,7 @@ function subscribeToDeviceRealtime(deviceId) {
         table: 'telemetry_data',
         filter: `device_id=eq.${deviceId}`
       },
-      (payload) => {
-        const data = payload.new;
-
-        state.telemetry.hasData = true;
-        state.telemetry.lastDataMs = Date.now();
-
-        state.telemetry.soilMoisture   = data.soil_moisture   || 0;
-        state.telemetry.temperature    = data.temperature     || 0;
-        state.telemetry.humidity       = data.humidity        || 0;
-        state.telemetry.soilTemp       = data.soil_temp       || 0;
-        state.telemetry.solarRadiation = data.solar_radiation || 0;
-        state.telemetry.rainDetected   = !!data.rain_detected;
-        state.telemetry.battery        = data.battery_pct     || 100;
-        state.telemetry.signal         = data.rssi            || -70;
-
-        // Push to rolling analytics buffer
-        const buf = state.analytics.buffer;
-        buf.soil.shift();  buf.soil.push(Math.round(data.soil_moisture));
-        buf.temp.shift();  buf.temp.push(Number((data.temperature || 0).toFixed(1)));
-        buf.humid.shift(); buf.humid.push(Math.round(data.humidity));
-        buf.solar.shift(); buf.solar.push(Math.round(data.solar_radiation || 0));
-
-        updateTelemetryUI();
-        renderCanvasChart();
-      }
+      (payload) => applyTelemetryRow(payload.new)
     )
     .subscribe();
 

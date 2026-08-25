@@ -65,8 +65,10 @@ export function useDeviceLive(deviceId: string | null) {
 
   const channelsRef = useRef<{ telemetry?: any; status?: any }>({});
 
-  const seed = useCallback(async (id: string) => {
-    setLoading(true);
+  // `silent` skips the loading flag so the background poll below doesn't
+  // flicker the UI on every refetch.
+  const seed = useCallback(async (id: string, silent = false) => {
+    if (!silent) setLoading(true);
 
     const [{ data: statusRow }, { data: latestRow }, { data: historyRows }] = await Promise.all([
       supabase
@@ -99,7 +101,7 @@ export function useDeviceLive(deviceId: string | null) {
       humid: chronological.map((r) => Math.round(r.humidity ?? 0)),
     });
 
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -157,6 +159,18 @@ export function useDeviceLive(deviceId: string | null) {
     const interval = setInterval(() => setTick((t) => t + 1), 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Polling fallback. Realtime above is the fast path, but it can silently
+  // deliver nothing — the channel may subscribe before realtime.setAuth()
+  // has applied the user's token (RLS then rejects it), and the socket can
+  // drop on background/foreground without recovering. Re-seeding on a timer
+  // means the screen is never more than one ESP32 tick stale, which is what
+  // stops "I have to pull-to-refresh to see new values".
+  useEffect(() => {
+    if (!deviceId) return;
+    const poll = setInterval(() => seed(deviceId, true), 10000);  // ESP32 sends every 10s
+    return () => clearInterval(poll);
+  }, [deviceId, seed]);
 
   const connectionState: ConnectionState = computeConnectionState({
     hasDevice: !!deviceId,
