@@ -70,6 +70,14 @@ export default function DashboardScreen() {
   const muted = cs === 'OFFLINE' || cs === 'NO_DEVICE';
   const hasDevice = !!activeDevice;
 
+  // Each sensor renders from its OWN health flag, never from the global
+  // sensors_ok — that is only (dht && soil), so a dead DHT used to blank the
+  // soil gauge and rain badge too. A working sensor always shows its real
+  // reading; a failed one shows 00 and is called out in NODE HEALTH below.
+  // `undefined` means older firmware that didn't send flags: assume OK.
+  const dhtOk = !muted && live.presence.sensorFlags.dht !== false;
+  const soilOk = !muted && live.presence.sensorFlags.soil !== false;
+
   return (
     <SafeAreaView style={styles.flex} edges={['top']}>
       <ScrollView
@@ -101,42 +109,56 @@ export default function DashboardScreen() {
         {cs === 'ONLINE_NO_SENSORS' ? (
           <Card style={styles.noSensorBanner}>
             <Text style={styles.noSensorText}>
-              Board is online but sensor readings are failing. Check wiring — values will populate automatically.
+              {`${[!dhtOk && 'DHT11 (temp/humidity, GPIO 4)', !soilOk && 'soil probe (GPIO 34)']
+                .filter(Boolean)
+                .join(' and ')} not reporting — check wiring. Other sensors keep working.`}
             </Text>
           </Card>
         ) : null}
 
         <View style={styles.gaugeWrap}>
           <SoilGauge
-            value={live.telemetry.soilMoisture}
-            stateLabel={muted ? 'NO DATA' : live.telemetry.soilMoisture < 40 ? 'DRY' : 'OPTIMAL'}
-            muted={muted || cs === 'ONLINE_NO_SENSORS'}
+            value={soilOk ? live.telemetry.soilMoisture : 0}
+            stateLabel={
+              muted
+                ? 'NO DATA'
+                : !soilOk
+                ? 'NO PROBE'
+                : live.telemetry.soilMoisture < 40
+                ? 'DRY'
+                : 'OPTIMAL'
+            }
+            muted={!soilOk}
           />
         </View>
 
         <View style={styles.statRow}>
           <StatTile
             label="Temperature"
-            value={muted || cs === 'ONLINE_NO_SENSORS' ? '00' : live.telemetry.temperature.toFixed(1)}
+            value={dhtOk ? live.telemetry.temperature.toFixed(1) : '00'}
             unit="°C"
-            color={muted ? colors.textMuted : colors.amber}
+            color={dhtOk ? colors.amber : colors.textMuted}
           />
           <StatTile
             label="Humidity"
-            value={muted || cs === 'ONLINE_NO_SENSORS' ? '00' : `${Math.round(live.telemetry.humidity)}`}
+            value={dhtOk ? `${Math.round(live.telemetry.humidity)}` : '00'}
             unit="%"
-            color={muted ? colors.textMuted : colors.blue}
+            color={dhtOk ? colors.blue : colors.textMuted}
           />
         </View>
 
         <Card style={styles.rainCard}>
           <Text style={styles.rainLabel}>RAIN STATUS</Text>
+          {/* Rain is reported independently of sensors_ok — the firmware sets
+              sensor_flags.rain = true unconditionally because a digital rain
+              sensor can't be health-checked (AgriSense_ESP32.ino
+              sendHeartbeat), and sensors_ok is only dht && soil. So a DHT or
+              soil failure must not mask a working rain reading; only a fully
+              offline device does. */}
           <Badge
             label={
               muted
                 ? 'SENSORS OFFLINE'
-                : cs === 'ONLINE_NO_SENSORS'
-                ? 'SENSOR CHECK NEEDED'
                 : live.telemetry.rainDetected
                 ? 'RAIN DETECTED'
                 : 'DRY / CLEAR'

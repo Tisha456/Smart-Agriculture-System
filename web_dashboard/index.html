@@ -325,10 +325,9 @@
           <span class="material-symbols-outlined"
             style="font-size: 20px; color: var(--green-primary); animation: pulse-opacity 2s ease-in-out infinite;">sensors_off</span>
           <div>
-            <strong style="color: var(--text-primary);">Device online — awaiting sensor data</strong>
-            <span style="margin-left: 0.4rem;">— the ESP32 is connected and reporting in, but its sensor
-              readings are failing. Check the DHT11 and soil moisture wiring, values will populate automatically
-              once fixed.</span>
+            <strong style="color: var(--text-primary);">Sensor not reporting</strong>
+            <span style="margin-left: 0.4rem;" id="noSensorDetail">— the ESP32 is connected and reporting in, but a
+              sensor read is failing. Check its wiring; every other sensor keeps updating normally.</span>
           </div>
         </div>
 

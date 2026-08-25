@@ -755,10 +755,13 @@ function confirmModalAction() {
 }
 
 // UI Telemetry Update Functions
-// Three connection states, three displays (per user spec):
-//   OFFLINE            -> 00, grey   — ESP32 not sending heartbeats
-//   ONLINE_NO_SENSORS  -> 00, green  — ESP32 alive, sensor reads failing
-//   LIVE               -> real values, normal color
+// Display rules:
+//   OFFLINE / NO_DEVICE -> everything 00, grey. No packets arriving at all.
+//   otherwise           -> EACH sensor renders from its own sensor_flags
+//                          entry, never from the global sensors_ok. A dead
+//                          DHT does not blank the soil gauge or the rain
+//                          badge, and vice versa. Only the warning banner
+//                          and the status pill still use sensors_ok.
 function updateTelemetryUI() {
   const offlineBanner = document.getElementById('offlineBanner');
   const noDataBanner   = document.getElementById('noSensorDataBanner');
@@ -816,32 +819,45 @@ function updateTelemetryUI() {
     return;
   }
 
-  if (cs === 'ONLINE_NO_SENSORS') {
-    showZeroed('val-nosensor', 'Online — No Sensor Data');
-    if (rainBadge) {
-      rainBadge.textContent = 'SENSOR CHECK NEEDED';
-      rainBadge.style.background = 'rgba(62,207,142,0.12)';
-      rainBadge.style.color = 'var(--green-primary)';
-      rainBadge.style.border = '1px solid rgba(62,207,142,0.3)';
-    }
-    if (offlineBanner) offlineBanner.style.display = 'none';
-    if (noDataBanner) noDataBanner.style.display = 'flex';
-    return;
+  // ── ONLINE: render each sensor from ITS OWN health flag ────────────────────
+  // Deliberately no global gate here. sensors_ok is only (dht && soil), so a
+  // dead DHT used to blank the soil gauge and the rain badge as well. Each
+  // sensor now stands alone: a working one always shows its real reading, a
+  // failed one shows 00 next to a FAIL in the Node Health card.
+  if (offlineBanner) offlineBanner.style.display = 'none';
+  if (noDataBanner) noDataBanner.style.display = (cs === 'ONLINE_NO_SENSORS') ? 'flex' : 'none';
+
+  const flags  = state.presence.sensorFlags || {};
+  const dhtOk  = flags.dht  !== false;   // undefined = older firmware, assume OK
+  const soilOk = flags.soil !== false;
+
+  // Name the actual failing sensor rather than blaming both.
+  const noSensorDetail = document.getElementById('noSensorDetail');
+  if (noSensorDetail) {
+    const failed = [
+      !dhtOk && 'DHT11 (temperature/humidity, GPIO 4)',
+      !soilOk && 'soil moisture probe (GPIO 34)',
+    ].filter(Boolean).join(' and ');
+    noSensorDetail.textContent =
+      `— ${failed} not reporting. Check the wiring; every other sensor keeps updating normally.`;
   }
 
-  // ── LIVE: real sensor data ──────────────────────────────────────────────────
-  if (offlineBanner) offlineBanner.style.display = 'none';
-  if (noDataBanner) noDataBanner.style.display = 'none';
   [soilValText, tempValText, humidityValText].forEach(el => {
     if (el) el.classList.remove('val-offline', 'val-nosensor');
   });
 
-  const moisture = Math.round(state.telemetry.soilMoisture);
-  if (soilValText) soilValText.textContent = moisture;
+  // Soil
+  const moisture = soilOk ? Math.round(state.telemetry.soilMoisture) : 0;
+  if (soilValText) {
+    soilValText.textContent = soilOk ? moisture : '00';
+    if (!soilOk) soilValText.classList.add('val-nosensor');
+  }
   if (gaugeVal) gaugeVal.setAttribute('stroke-dasharray', `${moisture}, 100`);
-
   if (soilStateText) {
-    if (moisture < state.telemetry.targetThreshold - 15) {
+    if (!soilOk) {
+      soilStateText.textContent = 'Probe Not Detected';
+      soilStateText.style.color = 'var(--amber-warning)';
+    } else if (moisture < state.telemetry.targetThreshold - 15) {
       soilStateText.textContent = 'Dry';
       soilStateText.style.color = 'var(--amber-warning)';
     } else {
@@ -850,29 +866,45 @@ function updateTelemetryUI() {
     }
   }
 
+  // Temperature + humidity (both come from the DHT, so they share a flag)
   let tempVal = state.telemetry.temperature;
   if (state.telemetry.tempUnit === 'F') {
     tempVal = (tempVal * 9/5) + 32;
   }
-  if (tempValText) tempValText.textContent = tempVal.toFixed(1);
+  if (tempValText) {
+    tempValText.textContent = dhtOk ? tempVal.toFixed(1) : '00';
+    if (!dhtOk) tempValText.classList.add('val-nosensor');
+  }
   const tempUnitText = document.getElementById('tempUnitText');
   if (tempUnitText) tempUnitText.textContent = `°${state.telemetry.tempUnit}`;
-  if (humidityValText) humidityValText.textContent = `${Math.round(state.telemetry.humidity)}%`;
+  if (humidityValText) {
+    humidityValText.textContent = dhtOk ? `${Math.round(state.telemetry.humidity)}%` : '00%';
+    if (!dhtOk) humidityValText.classList.add('val-nosensor');
+  }
   if (targetThresholdText) targetThresholdText.textContent = `${state.telemetry.targetThreshold}%`;
 
-  // ── Rain Sensor Badge ─────────────────────────────────────────────────────
-  if (rainBadge) {
-    if (state.telemetry.rainDetected) {
-      rainBadge.textContent = 'RAIN DETECTED';
-      rainBadge.style.background = 'rgba(88, 166, 255, 0.15)';
-      rainBadge.style.color = 'var(--blue-accent)';
-      rainBadge.style.border = '1px solid rgba(88,166,255,0.4)';
-    } else {
-      rainBadge.textContent = 'DRY / CLEAR';
-      rainBadge.style.background = 'rgba(62, 207, 142, 0.12)';
-      rainBadge.style.color = 'var(--green-primary)';
-      rainBadge.style.border = '1px solid rgba(62,207,142,0.3)';
-    }
+  // Rain — never gated, it has no health check to fail (see setRainBadge)
+  setRainBadge(state.telemetry.rainDetected);
+}
+
+// The rain sensor is reported independently of sensors_ok: the firmware sets
+// sensor_flags.rain = true unconditionally because a digital rain sensor
+// cannot be health-checked (see AgriSense_ESP32.ino sendHeartbeat). So a DHT
+// or soil failure must NOT mask a working rain reading — this is called from
+// the ONLINE_NO_SENSORS path too, not just the fully-live one.
+function setRainBadge(detected) {
+  const rainBadge = document.getElementById('rainStateBadge');
+  if (!rainBadge) return;
+  if (detected) {
+    rainBadge.textContent = 'RAIN DETECTED';
+    rainBadge.style.background = 'rgba(88, 166, 255, 0.15)';
+    rainBadge.style.color = 'var(--blue-accent)';
+    rainBadge.style.border = '1px solid rgba(88,166,255,0.4)';
+  } else {
+    rainBadge.textContent = 'DRY / CLEAR';
+    rainBadge.style.background = 'rgba(62, 207, 142, 0.12)';
+    rainBadge.style.color = 'var(--green-primary)';
+    rainBadge.style.border = '1px solid rgba(62,207,142,0.3)';
   }
 }
 
