@@ -17,6 +17,7 @@
       },
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://iqmrpwvbmfkhychhditg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxbXJwd3ZibWZraHljaGhkaXRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyNTY5OTEsImV4cCI6MjEwMTgzMjk5MX0.i8wCUSDmc6DI8ZLK6wQeaZDzQqZCEIzkZUrrg2RnefQ",
         "EXPO_PUBLIC_BACKEND_URL": "https://agrisense-ai-cqzv.onrender.com"
       }
     },
@@ -27,6 +28,7 @@
       },
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://iqmrpwvbmfkhychhditg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxbXJwd3ZibWZraHljaGhkaXRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyNTY5OTEsImV4cCI6MjEwMTgzMjk5MX0.i8wCUSDmc6DI8ZLK6wQeaZDzQqZCEIzkZUrrg2RnefQ",
         "EXPO_PUBLIC_BACKEND_URL": "https://agrisense-ai-cqzv.onrender.com"
       }
     }
