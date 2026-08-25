@@ -240,3 +240,8 @@ Go to **Tools** menu:
 - [ ] Start Python backend: `python -m uvicorn main:app --host 0.0.0.0 --port 8000`
 - [ ] Open website → Log in → Go to Connect page → Enter device ID → Click **Initialize Node Pairing**
 - [ ] Dashboard should start showing live telemetry within 10 seconds
+
+---
+
+> Flashing the ESP32-CAM (separate board, no USB port, manual boot mode) is
+> covered in [ESP32CAM_UPLOAD_GUIDE.md](ESP32CAM_UPLOAD_GUIDE.md).
