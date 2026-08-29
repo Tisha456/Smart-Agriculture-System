@@ -1,12 +1,10 @@
 # Stage 1 (minimal baseline) — training artifacts
 
-Drop the contents of `agrisense_stage1_artifacts.zip` here after running
-`ml/notebooks/AgriSense_Minimal_Train_Colab.ipynb`.
-
-Expected contents:
+Produced by running `ml/notebooks/AgriSense_Minimal_Train_Colab.ipynb` end to
+end and unzipping its output here.
 
 ```
-ml/artifacts/stage1_minimal/
+ml/artifacts/results_and_accuracy/
 ├── results.csv                      per-epoch training log
 ├── results.png                      loss / accuracy curves
 ├── confusion_matrix.png             per-class confusion
@@ -15,8 +13,20 @@ ml/artifacts/stage1_minimal/
 ├── metrics.json                     final val top-1 / top-5, class list
 └── weights/
     ├── best.pt                      trained PyTorch weights
+    ├── last.pt                      final-epoch checkpoint
     └── species.onnx                 exported ONNX (opset 12, 224px)
 ```
+
+## Result
+
+| | |
+|---|---|
+| Model | `yolo11n-cls`, 224px, seed 42 |
+| Epochs | 5 |
+| Classes | 38 (PlantVillage `Species___Condition`) |
+| Train / val images | 43,444 / 10,861 |
+| **Val top-1** | **99.32%** |
+| **Val top-5** | **100%** |
 
 These are committed to the repo on purpose — they are small (a few MB) and they
 are the evidence that this model was actually trained here. Only

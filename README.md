@@ -2,10 +2,21 @@
 
 **An AI-Powered Smart Agriculture Decision Support System**
 
+![Expo](https://img.shields.io/badge/Expo-54-000020?logo=expo)
+![FastAPI](https://img.shields.io/badge/FastAPI-Python%203.11-009688?logo=fastapi)
+![Supabase](https://img.shields.io/badge/Supabase-Postgres%20%2B%20Realtime-3ECF8E?logo=supabase)
+![Ultralytics](https://img.shields.io/badge/Ultralytics-YOLO11--cls-purple)
+![ONNX](https://img.shields.io/badge/ONNX-opset%2012-005CED?logo=onnx)
+![ESP32](https://img.shields.io/badge/Firmware-ESP32%20%2F%20ESP32--CAM-E7352C?logo=espressif)
+
 AgriSense AI unifies IoT sensor telemetry, automated irrigation, plant disease
 detection and LLM reasoning into one system. Farmers monitor field conditions live,
 irrigation runs itself, a leaf photo returns a diagnosis, and a chat assistant answers
 questions grounded in that farm's actual sensor readings.
+
+<p align="center">
+  <img src="docs/images/web-dashboard.png" alt="AgriSense AI live telemetry dashboard" width="100%">
+</p>
 
 ---
 
@@ -32,6 +43,10 @@ so without the gate a disconnected probe reading `0` would satisfy `soil < thres
 forever and run the pump continuously. The pump logic is asserted at boot against 11
 cases with no hardware attached.
 
+<p align="center">
+  <img src="docs/images/web-controls.png" alt="Irrigation controls: manual override, automation modes, force stop, timer schedules" width="100%">
+</p>
+
 ### 🍃 Plant disease detection
 Photograph a leaf, get back species, condition, severity, affected area %, symptoms,
 likely cause, treatment and prevention steps.
@@ -54,6 +69,16 @@ straight into the chat.
 Devices pair with a serial + secret, gated on the board being powered on at pairing
 time. Row-level security scopes every table to the owning account, up to 4 devices each.
 All API keys stay server-side — clients call this backend, never the upstream provider.
+
+<p align="center">
+  <img src="docs/images/web-connect.png" alt="Device provisioning: pairing, session, telemetry link health" width="100%">
+</p>
+
+### 📱 Mobile app
+
+| Dashboard controls | Plant Scan | Farm Advisor |
+|---|---|---|
+| <img src="docs/images/app-controls.jpg" width="260" alt="Mobile app pump control, automation mode, force stop"> | <img src="docs/images/app-plant-scan.jpg" width="260" alt="Mobile app plant scan capture screen"> | <img src="docs/images/app-advisor.jpg" width="260" alt="Mobile app farm advisor chat with suggested questions"> |
 
 ---
 
@@ -107,30 +132,68 @@ Two separate boards — they are not wired together, they just share Wi-Fi.
 
 **Camera node** (AI-Thinker ESP32-CAM) — must be a second board: the OV2640 interface
 occupies GPIO 34 (the soil ADC), GPIO 4 (flash LED) and GPIO 16 (PSRAM CS), and leaves
-no ADC1 pin free. Wiring details in `esp32_firmware/WIRING_GUIDE.md`.
+no ADC1 pin free.
+
+Full pin-by-pin wiring, relay power supply notes, and a step-by-step relay
+diagnosis table: **[esp32_firmware/WIRING_GUIDE.md](esp32_firmware/WIRING_GUIDE.md)**
+
+---
+
+## 📊 Results
+
+A trained baseline lives in the repo, not just a promise of one —
+[`ml/artifacts/results_and_accuracy/`](ml/artifacts/results_and_accuracy/):
+
+| | |
+|---|---|
+| Model | `yolo11n-cls`, 224px input, seed 42 |
+| Dataset | PlantVillage — 38 `Species___Condition` classes |
+| Split | 43,444 train / 10,861 val images |
+| Epochs | 5 |
+| **Validation top-1** | **99.32%** |
+| **Validation top-5** | **100%** |
+
+<p align="center">
+  <img src="ml/artifacts/results_and_accuracy/results.png" alt="Training curves: loss and top-1/top-5 accuracy over 5 epochs" width="70%">
+  <img src="ml/artifacts/results_and_accuracy/confusion_matrix_normalized.png" alt="Normalized confusion matrix across 38 classes" width="70%">
+</p>
+
+**Read this number honestly.** PlantVillage is lab imagery — single detached
+leaves on plain backgrounds — so accuracy here runs high and does **not**
+transfer to field photos. That gap is exactly why `ml/configs/paths.yaml` holds
+PlantDoc out as a real-world evaluation-only set (see
+[documents/DATASETS.md](documents/DATASETS.md)). This baseline exists to prove
+the training → export → serving path works end to end with real numbers, not
+to claim field-ready accuracy.
+
+Reproduce it yourself in ~15 minutes on a free Colab GPU:
+[`ml/notebooks/AgriSense_Minimal_Train_Colab.ipynb`](ml/notebooks/AgriSense_Minimal_Train_Colab.ipynb).
 
 ---
 
 ## 🧠 Model status
 
-Honest summary, because the two are easy to conflate:
+Honest summary, because it's easy to conflate "a model exists" with "the model
+in the app":
 
-- **The deployed Plant Scan runs on Gemini vision.** `PLANT_API_URL` / `PLANT_API_KEY`
-  are unset, so `/api/plant/predict` uses the LLM fallback with a strict JSON schema.
-- **The two-stage classifier in `ml/` is not trained to completion.** The full pipeline
-  exists — acquisition, deduplication against the held-out test set, taxonomy
-  unification, two-stage training, ONNX export, serving — but producing production
-  weights needs ~13 GB of data and a GPU budget we did not have before the deadline.
-- **A minimal baseline is reproducible in ~20 minutes.**
-  `ml/notebooks/AgriSense_Minimal_Train_Colab.ipynb` trains PlantVillage only for a few
-  epochs and emits real training logs, curves, a confusion matrix and an exported ONNX
-  into `ml/artifacts/stage1_minimal/`.
+- **The deployed Plant Scan runs on Gemini vision**, not the classifier above.
+  `PLANT_API_URL` / `PLANT_API_KEY` are unset, so `/api/plant/predict` uses the
+  LLM fallback with a strict JSON response schema.
+- **The baseline above is a single-stage species classifier**, not the
+  production two-stage pipeline. `serving/pipeline_runtime.py` expects
+  `registry.json` plus separate `stage1/species.onnx` and
+  `stage2/<species>.onnx` models, written by
+  `ml/src/agrisense_pd/export/registry.py`. This combined classifier does not
+  have that structure, so it does not drop into `serving/` as-is.
+- **The full two-stage pipeline is built but not run to completion.**
+  Acquisition, deduplication against the held-out test set, taxonomy
+  unification, two-stage training, ONNX export and serving all exist in `ml/`
+  and `serving/` — training it needs ~13 GB of data and a GPU budget beyond
+  what a free Colab tier gives in one sitting.
 
-Swapping the trained model in is an environment change, not a code change: deploy
-`serving/`, set `PLANT_API_URL` + `PLANT_API_KEY`, done.
-
-Datasets, licences and the train/test contamination handling:
-**[documents/DATASETS.md](documents/DATASETS.md)**
+Swapping the trained model in is an environment change, not a code change: run
+[`ml/notebooks/AgriSense_PlantDisease_Colab.ipynb`](ml/notebooks/AgriSense_PlantDisease_Colab.ipynb),
+deploy `serving/`, set `PLANT_API_URL` + `PLANT_API_KEY` on the backend, done.
 
 ---
 
@@ -176,7 +239,7 @@ credentials, device ID, and `CAM_UPLOAD_KEY` for the camera), select the board
 
 ```bash
 cd backend && python test_plant_predict.py && python test_camera.py
-cd ml && python -m pytest tests/
+cd ml && python -m pytest tests/       # 31 passed
 cd mobile_app && npx tsc --noEmit
 ```
 
@@ -188,6 +251,7 @@ cd mobile_app && npx tsc --noEmit
 - **[DATASETS.md](documents/DATASETS.md)** — every dataset, licence, and why
 - **[Supabase_Complete_Setup.md](documents/Supabase_Complete_Setup.md)** — schema and RLS
 - **[WIRING_GUIDE.md](esp32_firmware/WIRING_GUIDE.md)** — pin-by-pin hardware wiring
+- **[ml/README.md](ml/README.md)** — training pipeline, phase by phase
 
 ---
 *AgriSense AI — Cultivating intelligence for the modern smallholder farm.*
