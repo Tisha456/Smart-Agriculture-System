@@ -15,7 +15,7 @@ irrigation runs itself, a leaf photo returns a diagnosis, and a chat assistant a
 questions grounded in that farm's actual sensor readings.
 
 <p align="center">
-  <img src="docs/images/web-dashboard.png" alt="AgriSense AI live telemetry dashboard" width="100%">
+  <img src="documents/images/web-dashboard.png" alt="AgriSense AI live telemetry dashboard" width="100%">
 </p>
 
 ---
@@ -44,7 +44,7 @@ forever and run the pump continuously. The pump logic is asserted at boot agains
 cases with no hardware attached.
 
 <p align="center">
-  <img src="docs/images/web-controls.png" alt="Irrigation controls: manual override, automation modes, force stop, timer schedules" width="100%">
+  <img src="documents/images/web-controls.png" alt="Irrigation controls: manual override, automation modes, force stop, timer schedules" width="100%">
 </p>
 
 ### 🍃 Plant disease detection
@@ -71,14 +71,14 @@ time. Row-level security scopes every table to the owning account, up to 4 devic
 All API keys stay server-side — clients call this backend, never the upstream provider.
 
 <p align="center">
-  <img src="docs/images/web-connect.png" alt="Device provisioning: pairing, session, telemetry link health" width="100%">
+  <img src="documents/images/web-connect.png" alt="Device provisioning: pairing, session, telemetry link health" width="100%">
 </p>
 
 ### 📱 Mobile app
 
 | Dashboard controls | Plant Scan | Farm Advisor |
 |---|---|---|
-| <img src="docs/images/app-controls.jpg" width="260" alt="Mobile app pump control, automation mode, force stop"> | <img src="docs/images/app-plant-scan.jpg" width="260" alt="Mobile app plant scan capture screen"> | <img src="docs/images/app-advisor.jpg" width="260" alt="Mobile app farm advisor chat with suggested questions"> |
+| <img src="documents/images/app-controls.jpg" width="260" alt="Mobile app pump control, automation mode, force stop"> | <img src="documents/images/app-plant-scan.jpg" width="260" alt="Mobile app plant scan capture screen"> | <img src="documents/images/app-advisor.jpg" width="260" alt="Mobile app farm advisor chat with suggested questions"> |
 
 ---
 
