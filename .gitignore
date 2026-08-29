@@ -25,3 +25,12 @@ ml/notebooks/.ipynb_checkpoints/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Tooling state — regenerated automatically, never belongs in the repo.
+# .expo is recreated by `expo start`; .claude holds per-machine Claude Code
+# permission settings that are personal to whoever cloned this.
+.expo/
+.claude/
+
+# Node dependencies (mobile_app / web_dashboard)
+node_modules/

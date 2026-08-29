@@ -65,7 +65,7 @@
 
 // Must match CAM_UPLOAD_KEY in backend/.env exactly. Generate one with:
 //   python -c "import secrets; print(secrets.token_urlsafe(24))"
-#define CAM_UPLOAD_KEY     "REPLACE_WITH_YOUR_CAM_UPLOAD_KEY"
+#define CAM_UPLOAD_KEY     "td--M_yeveIQ5aZ-PjNUT1SkrtrXNmdL"
 
 // ── Calibration knobs — real hardware never matches the datasheet ───────────
 // ponytail: fixed values below, no auto-tuning. Adjust by hand if the board

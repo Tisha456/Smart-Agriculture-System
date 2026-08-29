@@ -6,10 +6,9 @@ them honestly (including a real-world PlantDoc test), and exports them
 for the FastAPI serving layer in `../serving/`.
 
 Full design rationale lives in `../plant-disease-implementation-plan.md`
-(the spec this code implements) and `../plant-disease-full-roadmap-v2.md`
-(the original stage-by-stage roadmap). Read the implementation plan first
-if something here looks unexplained — every non-obvious decision is
-justified there, not repeated in code comments.
+(the spec this code implements). Read it first if something here looks
+unexplained — every non-obvious decision is justified there, not repeated
+in code comments.
 
 ## Quickstart (Google Colab)
 

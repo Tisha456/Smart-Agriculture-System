@@ -1,7 +1,7 @@
 # AgriSense — Plant Species + Disease Recognition: Implementation Spec
 
 **Status:** build spec. Nothing here has been generated yet.
-**Derived from:** `plant-disease-full-roadmap-v2.md` (that file stays as the "why"; this file is the "what to build").
+**Scope:** this file is the single source of truth — both the "why" and the "what to build". (It absorbed an earlier stage-by-stage roadmap document, since removed.)
 **Execution target:** Google Colab, free tier (single T4, ~16 GB VRAM, ~12 h session cap, disconnects expected).
 **Deliverable:** two trained models — Stage 1 (species) and Stage 2 (one disease model per species) — exported to ONNX, plus a keyed FastAPI service that serves them into the AgriSense app + web dashboard.
 
@@ -23,9 +23,10 @@ Work phase by phase. Do not generate a later phase's files early — later phase
 
 ---
 
-## 1. Deviations from the roadmap (read before generating)
+## 1. Deviations from the original roadmap (read before generating)
 
-These are deliberate. Each replaces a step in `plant-disease-full-roadmap-v2.md`.
+These are deliberate. Each replaces a step from the earlier roadmap document that this
+spec superseded.
 
 ### 1.1 Drive is cold storage; `/content` is the working disk
 The roadmap (A1) puts `data/` in Drive. Mounted Drive is a FUSE layer with per-file latency in the tens of milliseconds — fine for a 4 GB archive, ruinous for 100,000 individual JPEGs read every epoch. Epoch time becomes I/O-bound and the GPU idles.

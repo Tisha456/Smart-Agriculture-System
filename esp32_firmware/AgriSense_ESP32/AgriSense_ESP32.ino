@@ -21,7 +21,7 @@
 //  WHAT CHANGED FROM v2.x:
 //    - ESP32 now talks directly to Supabase REST API (HTTPS) — no FastAPI needed.
 //    - Telemetry:  POST https://<SUPABASE_URL>/rest/v1/telemetry_data
-//    - Commands:   GET  https://<SUPABASE_URL>/rest/v1/device_commands?...
+//    - Commands:   POST https://<SUPABASE_URL>/rest/v1/rpc/device_pending_commands
 //    - FastAPI backend is no longer required for the data pipeline.
 //      (It can still be used later for the pump automation decision engine.)
 //
@@ -34,7 +34,7 @@
 //  FLOW:
 //    1. Connects to Wi-Fi (HTTPS/TLS capable)
 //    2. Every 10 s → reads all sensors → POST to Supabase telemetry_data table
-//    3. Every  5 s → GET from Supabase device_commands table
+//    3. Every  5 s → asks Supabase (RPC, proves device_id + pairing_secret) for a command
 //         → if PUMP_ON  received → turn relay ON  + mark command executed
 //         → if PUMP_OFF received → turn relay OFF + mark command executed
 //    4. Every 10 s → auto-irrigation decides the pump from soil moisture.
@@ -87,11 +87,35 @@
 #define RAIN_SENSOR_PIN    33     // Rain Sensor DO     → GPIO 33
 #define RELAY_PUMP_PIN     16     // Relay IN           → GPIO 16
 
+// ── Relay Polarity ────────────────────────────────────────────────────────────
+// Most blue single-channel modules are active-LOW (IN pulled LOW = relay ON).
+// Some are active-HIGH, and some have a LOW/HIGH trigger jumper on the board.
+// If the Serial log says "Pump OFF" while the motor is actually running, the
+// module is the opposite polarity — set this to 0 and re-flash.
+// NOTE: if flipping this does NOT help, the problem is the relay's VCC. An
+// opto-isolated module powered at 5V never sees a 3.3V ESP32 HIGH as "off"
+// (1.7 V still flows through the input LED), so it latches ON forever. See
+// WIRING_GUIDE.md "Relay Module" for the JD-VCC jumper fix.
+#define RELAY_ACTIVE_LOW   1
+#define RELAY_ON_LEVEL     (RELAY_ACTIVE_LOW ? LOW  : HIGH)
+#define RELAY_OFF_LEVEL    (RELAY_ACTIVE_LOW ? HIGH : LOW)
+
+// ── DHT11 Read Retry ───────────────────────────────────────────────────────────
+// DHT11 + an active Wi-Fi radio drops a read often enough that one attempt per
+// tick isn't reliable. The Adafruit library caches its last result for 2000 ms
+// and just replays it if asked again inside that window, so retries must be
+// spaced OUTSIDE it or they silently return the same failure.
+#define DHT_READ_ATTEMPTS  3
+#define DHT_RETRY_DELAY_MS 2200   // > library's 2000 ms cache window
+
 // ── Soil Moisture Calibration ─────────────────────────────────────────────────
 // Measured on this board: dry air ≈ 4095, probe fully submerged ≈ 30.
 // Re-measure if you swap the probe — these are per-sensor, not universal.
-// Step 1: Leave sensor in dry air → note ADC reading → set SOIL_DRY_VALUE
-// Step 2: Submerge probe in water  → note ADC reading → set SOIL_WET_VALUE
+// Step 1: Leave sensor in dry air        → note ADC reading → set SOIL_DRY_VALUE
+// Step 2: Push probe into SATURATED SOIL → note ADC reading → set SOIL_WET_VALUE
+//         (NOT a glass of water — soil holds air pockets a water bath doesn't,
+//         so a "submerged in water" reading maps real wet soil to a % that
+//         never reaches SOIL_WET_PCT, and the pump never gets the OFF signal.)
 #define SOIL_DRY_VALUE     4095   // Raw ADC when fully dry (12-bit max)
 #define SOIL_WET_VALUE     30     // Raw ADC when submerged in water (measured)
 
@@ -139,6 +163,12 @@
 // and empty the tank. Mirrors the backend's "Max Runtime Safety Cutoff".
 #define PUMP_MAX_RUNTIME_MS  (15UL * 60UL * 1000UL)   // 15 minutes
 
+// After a max-runtime cutoff, soil often still reads "dry" (bad calibration,
+// probe lost contact, etc). Without a cooldown the very next tick sees the
+// same dry reading and restarts the pump, so it just cycles 15 min on / 10 s
+// off forever. This forces a pause before auto-irrigation can restart it.
+#define PUMP_COOLDOWN_MS     (30UL * 60UL * 1000UL)   // 30 minutes
+
 // Set to 0 to drop the boot-time logic self-check (saves ~600 bytes).
 #define RUN_SELFTEST       1
 
@@ -172,15 +202,36 @@ int   g_rssi          = 0;
 
 // Auto-irrigation state. All deltas use unsigned subtraction against millis()
 // so they stay correct across the ~49-day rollover.
-bool          g_manualActive  = false;  // true = a website/app command is in charge
+// g_manualCmd: -1 = website/app forced the pump OFF, 0 = no override in effect,
+// +1 = website/app forced the pump ON. A tri-state (not a bool) so a manual
+// PUMP_OFF is distinguishable from "no override" — both matter for whether the
+// sensor rules in pumpShouldRun() are allowed to turn the pump back on.
+int8_t        g_manualCmd     = 0;
 unsigned long g_manualSinceMs = 0;      // when that command landed
 unsigned long g_pumpStartedMs = 0;      // when the pump last switched ON
+
+// Set after a max-runtime safety cutoff; auto-irrigation stays off until this
+// many ms have passed, even if soil still reads dry. See PUMP_COOLDOWN_MS.
+unsigned long g_cooldownStartMs = 0;
+bool          g_inCooldown      = false;
+float         g_soilAtPumpStart = 0;    // for the stuck-calibration hint below
+
 int   g_telemetryCount = 0;   // how many telemetry packets sent
 int   g_bootCount      = 1;   // increments once per boot; sent in heartbeat
 
 // Sensor health flags — updated every telemetry tick, always sent in heartbeat
 // (even when the sensor read failed, so the website can show "online, no data")
 bool  g_dhtOk       = false;
+bool  g_dhtEverOk   = false;  // has the DHT11 read successfully at least once?
+float g_lastGoodTemp = 0;
+float g_lastGoodHum  = 0;
+// Consecutive fully-failed telemetry ticks. A genuinely unplugged/dead DHT11
+// fails forever, and retrying DHT_READ_ATTEMPTS times every 10 s tick would
+// then permanently cost up to (DHT_READ_ATTEMPTS-1) * DHT_RETRY_DELAY_MS of
+// blocking delay() per tick — starving the 5 s command poll and heartbeat
+// right when a user is debugging a sensor fault. After a couple of full
+// misses this backs off to a single attempt per tick until one succeeds.
+int   g_dhtConsecutiveFails = 0;
 bool  g_soilOk      = false;
 bool  g_sensorsOk   = false;
 long  g_lastSoilRaw = 0;      // raw ADC, useful for calibrating SOIL_DISCONNECT_ADC
@@ -244,13 +295,25 @@ void printSensorDashboard(const char* trigger) {
     Serial.println("    Water Pump   : OFF");
   }
 
-  if (g_manualActive) {
-    unsigned long leftMs = MANUAL_OVERRIDE_MS - (millis() - g_manualSinceMs);
-    Serial.printf("    Control      : MANUAL (website) — auto resumes in %lu s\n",
+  if (g_inCooldown) {
+    unsigned long leftMs = PUMP_COOLDOWN_MS - (millis() - g_cooldownStartMs);
+    Serial.printf("    Control      : COOLDOWN (post safety cutoff) — auto resumes in %lu s\n",
                   leftMs / 1000UL);
+  } else if (g_manualCmd != 0) {
+    unsigned long leftMs = MANUAL_OVERRIDE_MS - (millis() - g_manualSinceMs);
+    Serial.printf("    Control      : MANUAL %s (website) — auto resumes in %lu s\n",
+                  g_manualCmd > 0 ? "ON" : "OFF", leftMs / 1000UL);
   } else {
     Serial.printf("    Control      : AUTO — ON below %d%%, OFF at %d%%\n",
                   SOIL_DRY_PCT, SOIL_WET_PCT);
+  }
+
+  if (g_pumpOn && (millis() - g_pumpStartedMs) > 5UL * 60UL * 1000UL &&
+      g_soilMoisture <= g_soilAtPumpStart + 2.0f) {
+    Serial.printf("    [CALIBRATION] Pump ran %lu min, soil still ~%.0f%% — SOIL_WET_VALUE "
+                  "is likely measured in water, not saturated soil. Re-measure per "
+                  "WIRING_GUIDE.md.\n",
+                  (millis() - g_pumpStartedMs) / 60000UL, g_soilMoisture);
   }
 
   // ── Network ────────────────────────────────────────────────────────────────
@@ -288,11 +351,14 @@ void setup() {
 
   // ── Configure Pins ──────────────────────────────────────────────────────────
   pinMode(RAIN_SENSOR_PIN, INPUT);
-  pinMode(RELAY_PUMP_PIN,  OUTPUT);
 
-  // Relay is active-LOW → start with pump OFF (HIGH = relay OFF)
-  digitalWrite(RELAY_PUMP_PIN, HIGH);
-  Serial.println("  [INIT] Relay → GPIO 16 → Pump OFF (HIGH = relay OFF)");
+  // Set the idle level BEFORE switching the pin to OUTPUT. A GPIO defaults LOW
+  // the instant pinMode(OUTPUT) is called, and LOW energises this active-LOW
+  // relay — reversing the order clicked the pump on for a moment at every boot
+  // and reset, even though the very next line meant to turn it off.
+  digitalWrite(RELAY_PUMP_PIN, RELAY_OFF_LEVEL);
+  pinMode(RELAY_PUMP_PIN, OUTPUT);
+  Serial.printf("  [INIT] Relay -> GPIO 16 -> Pump OFF (active-%s module)\n", RELAY_ACTIVE_LOW ? "LOW" : "HIGH");
 
   // ── Start DHT ───────────────────────────────────────────────────────────────
   dht.begin();
@@ -411,21 +477,58 @@ bool readRainDetected() {
   return (digitalRead(RAIN_SENSOR_PIN) == LOW);
 }
 
+// Tries up to `attempts` times, spaced DHT_RETRY_DELAY_MS apart (longer than
+// the library's internal 2000 ms cache window, so each attempt is a real
+// re-read of the sensor and not a replay of the same failure). Returns true
+// and fills t/h on success; returns false, leaving t/h untouched, if every
+// attempt comes back NaN.
+bool readDHT(float& t, float& h, int attempts) {
+  for (int attempt = 1; attempt <= attempts; attempt++) {
+    float humidity    = dht.readHumidity();
+    float temperature = dht.readTemperature();  // Celsius
+    if (!isnan(humidity) && !isnan(temperature)) {
+      t = temperature;
+      h = humidity;
+      return true;
+    }
+    if (attempt < attempts) delay(DHT_RETRY_DELAY_MS);
+  }
+  return false;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SEND TELEMETRY  →  POST /api/telemetry
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void sendTelemetry() {
   // ── Read all sensors ────────────────────────────────────────────────────────
-  // Every sensor is health-checked independently. A failed/disconnected
-  // sensor reports 0 rather than skipping the tick entirely — this is what
-  // lets the website tell "ESP32 online, sensors unplugged" (zeros, but
-  // still receiving packets) apart from "ESP32 powered off" (no packets,
-  // heartbeat goes stale).
-  float humidity    = dht.readHumidity();
-  float temperature = dht.readTemperature();  // Celsius
-  g_dhtOk = !isnan(humidity) && !isnan(temperature);
-  if (!g_dhtOk) {
+  // DHT11 + an active Wi-Fi radio drops reads often enough that one attempt
+  // isn't reliable, so this retries a few times (spaced past the library's
+  // internal 2 s cache) before giving up. On total failure it falls back to
+  // the last known-good reading instead of 0 — a real temperature/humidity
+  // that's a few seconds stale beats a fake "0 °C, 0% humidity" data point.
+  // g_dhtOk still reflects THIS tick's real result (sent in the heartbeat),
+  // so the website can tell "sensor flaky" apart from "sensor fine".
+  //
+  // After 2 fully-failed ticks in a row, drop to a single attempt per tick —
+  // a truly disconnected sensor would otherwise cost the full retry delay
+  // forever, which starves the 5 s command poll and heartbeat. One attempt
+  // still catches the sensor coming back.
+  int attempts = (g_dhtConsecutiveFails >= 2) ? 1 : DHT_READ_ATTEMPTS;
+  float humidity, temperature;
+  g_dhtOk = readDHT(temperature, humidity, attempts);
+  if (g_dhtOk) {
+    g_dhtConsecutiveFails = 0;
+    g_lastGoodTemp = temperature;
+    g_lastGoodHum  = humidity;
+    g_dhtEverOk    = true;
+  } else if (g_dhtEverOk) {
+    g_dhtConsecutiveFails++;
+    Serial.println("  [DHT11] Read FAILED after retries — using last known-good reading.");
+    temperature = g_lastGoodTemp;
+    humidity    = g_lastGoodHum;
+  } else {
+    g_dhtConsecutiveFails++;
     Serial.println("  [DHT11] Read FAILED — check wiring on GPIO 4. Sending 0s this tick.");
     humidity = 0;
     temperature = 0;
@@ -440,7 +543,10 @@ void sendTelemetry() {
 
   g_sensorsOk = g_dhtOk && g_soilOk;
 
-  float soilTemp     = g_dhtOk ? (temperature + SOIL_TEMP_OFFSET) : 0;
+  // Use g_dhtEverOk, not g_dhtOk — `temperature` already holds a valid value
+  // (this tick's or the last known-good one) whenever the DHT has ever
+  // succeeded, and soilTemp shouldn't collapse to 0 on a merely-flaky tick.
+  float soilTemp     = g_dhtEverOk ? (temperature + SOIL_TEMP_OFFSET) : 0;
   bool  rainDetected = readRainDetected();
   g_rssi             = WiFi.RSSI();
 
@@ -639,7 +745,15 @@ void checkPairStatus() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  POLL FOR COMMANDS  →  GET /api/device/command/{device_id}
+//  POLL FOR COMMANDS  →  POST /rest/v1/rpc/device_pending_commands
+//
+//  Not a plain table SELECT: device_commands has no anon SELECT policy that
+//  can name only this device's rows without also opening every device's
+//  rows to anyone holding the public anon key (see
+//  documents/supabase_presence_and_pairing.sql for the full reasoning). This
+//  RPC reuses the same proof-of-possession check device_pair_status() already
+//  uses — device_id AND pairing_secret must both match device_registry —
+//  before it will return anything.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void pollCommand() {
@@ -647,28 +761,27 @@ void pollCommand() {
   client.setInsecure();
 
   HTTPClient http;
-
-  // Supabase REST filter: device_id=eq.AGS-0001 AND executed=eq.false
-  // order=created_at.asc (oldest first), limit=1 (one at a time)
-  String url = String("https://") + SUPABASE_URL
-             + "/rest/v1/device_commands"
-             + "?device_id=eq." + DEVICE_ID
-             + "&executed=eq.false"
-             + "&order=created_at.asc"
-             + "&limit=1";
-
+  String url = String("https://") + SUPABASE_URL + "/rest/v1/rpc/device_pending_commands";
   http.begin(client, url);
+
+  http.addHeader("Content-Type", "application/json");
   http.addHeader("apikey", SUPABASE_ANON_KEY);
   http.addHeader("Authorization", String("Bearer ") + SUPABASE_ANON_KEY);
   http.addHeader("Accept", "application/json");
 
-  int code = http.GET();
+  StaticJsonDocument<128> reqDoc;
+  reqDoc["p_device_id"] = DEVICE_ID;
+  reqDoc["p_secret"]    = PAIRING_SECRET;
+  String reqBody;
+  serializeJson(reqDoc, reqBody);
+
+  int code = http.POST(reqBody);
 
   if (code == 200) {
     String response = http.getString();
 
-    // Supabase returns an array: [{"id":1, "command":"PUMP_ON", ...}]
-    StaticJsonDocument<256> doc;
+    // Supabase returns an array: [{"id":1, "command":"PUMP_ON"}]
+    StaticJsonDocument<512> doc;
     DeserializationError err = deserializeJson(doc, response);
 
     if (!err && doc.is<JsonArray>() && doc.as<JsonArray>().size() > 0) {
@@ -685,14 +798,13 @@ void pollCommand() {
         String cmdStr = String(command);
 
         if (cmdStr == "PUMP_ON") {
-          setPump(true);
-          startManualOverride();
-          Serial.println("  >>> ACTION: Relay energised — Water Pump is now ON");
+          startManualOverride(+1);
+          Serial.printf("  >>> ACTION: Manual ON requested — pump is now %s (sensor safety rules still apply)\n",
+                        g_pumpOn ? "ON" : "held OFF");
           Serial.println("  >>> This was triggered from the website dashboard.");
         } else if (cmdStr == "PUMP_OFF") {
-          setPump(false);
-          startManualOverride();
-          Serial.println("  >>> ACTION: Relay released — Water Pump is now OFF");
+          startManualOverride(-1);
+          Serial.println("  >>> ACTION: Force-stop — Water Pump is now OFF and held off.");
           Serial.println("  >>> This was triggered from the website dashboard.");
         } else {
           Serial.printf("  >>> Unknown command: '%s' — ignored\n", command);
@@ -760,23 +872,46 @@ void markCommandExecuted(long cmdId) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // The whole watering decision, as a pure function of one fresh reading plus the
-// current pump state. Kept separate from autoIrrigate() so the thresholds and
-// the hysteresis band can be checked at boot without any hardware attached.
-bool pumpShouldRun(float soilPct, bool soilOk, bool rain, bool pumpOn) {
-  if (!soilOk) return false;              // no probe → never water blind
-  if (rain)    return false;              // raining → the field is watering itself
+// current pump state and any manual command. Kept separate from autoIrrigate()
+// so the thresholds and the precedence order can be checked at boot without
+// any hardware attached.
+//
+// manual: -1 = website/app forced OFF, 0 = no override, +1 = website/app
+// forced ON. Sensor safety rules are checked FIRST and unconditionally, so a
+// manual ON can never force the pump through rain, wet soil, or a disconnected
+// probe — those three always win, matching how a human operator would use it.
+bool pumpShouldRun(float soilPct, bool soilOk, bool rain, bool pumpOn, int8_t manual) {
+  if (!soilOk)                 return false;  // no probe → never water blind
+  if (rain)                    return false;  // raining → field waters itself
+  if (soilPct >= SOIL_WET_PCT) return false;  // already wet → stop/stay off
+  if (manual < 0)               return false;  // force-stop from website/app
+  if (manual > 0)               return true;   // manual run from website/app
   if (soilPct <  SOIL_DRY_PCT) return true;
-  if (soilPct >= SOIL_WET_PCT) return false;
-  return pumpOn;                          // inside the band → hold, do not chatter
+  return pumpOn;                              // inside the band → hold, do not chatter
 }
 
-// Hand control to the website/app for MANUAL_OVERRIDE_MS. Called for every
-// PUMP_ON/PUMP_OFF that arrives, including the force-stop button.
-void startManualOverride() {
-  g_manualActive  = true;
+// Record a website/app command and apply it right away using the latest
+// cached sensor reading, so "sensors always win" is true immediately — not
+// just on the next 10 s auto-irrigation tick. A manual ON also lifts an
+// active safety cooldown, since a human choosing to override a paused pump
+// is a deliberate act (PUMP_MAX_RUNTIME_MS still caps whatever run follows).
+void startManualOverride(int8_t direction) {
+  g_manualCmd     = direction;
   g_manualSinceMs = millis();
-  Serial.printf("  [Auto] Manual override — auto-irrigation paused for %lu min.\n",
-                MANUAL_OVERRIDE_MS / 60000UL);
+
+  if (direction > 0 && g_inCooldown) {
+    g_inCooldown = false;
+    Serial.println("  [Auto] Manual ON — clearing safety cooldown.");
+  }
+
+  Serial.printf("  [Auto] Manual %s — auto-irrigation yields for %lu min, sensors can still override.\n",
+                direction > 0 ? "ON" : "OFF", MANUAL_OVERRIDE_MS / 60000UL);
+
+  bool want = pumpShouldRun(g_soilMoisture, g_soilOk, g_rainDetected, g_pumpOn, g_manualCmd);
+  if (want != g_pumpOn) {
+    setPump(want);
+    if (want) g_soilAtPumpStart = g_soilMoisture;
+  }
 }
 
 // Called once per telemetry tick, right after the sensors are read.
@@ -786,33 +921,52 @@ void autoIrrigate() {
     Serial.printf("\n  [Safety] Pump has run %lu min — max runtime cutoff, forcing OFF.\n",
                   PUMP_MAX_RUNTIME_MS / 60000UL);
     setPump(false);
-    g_manualActive = false;
+    g_manualCmd       = 0;
+    g_cooldownStartMs = millis();
+    g_inCooldown      = true;
     return;
   }
 
-  // ── Manual override from the website / app ────────────────────────────────
-  if (g_manualActive) {
-    if (millis() - g_manualSinceMs < MANUAL_OVERRIDE_MS) {
-      return;   // a human is driving — leave the pump alone
+  // ── Post-cutoff cooldown — stops the 15-min-on/10-s-off restart loop that
+  // happens when soil still reads dry right after a cutoff (bad calibration,
+  // probe lost contact, etc). A fresh manual ON is allowed to skip it. ───────
+  if (g_inCooldown) {
+    if (millis() - g_cooldownStartMs < PUMP_COOLDOWN_MS) {
+      return;   // stay off, wait it out
     }
-    g_manualActive = false;
+    g_inCooldown = false;
+    Serial.println("\n  [Auto] Cooldown expired — auto-irrigation back in control.");
+  }
+
+  // ── Manual override window from the website / app ─────────────────────────
+  // Only clears the override on expiry — it no longer short-circuits the
+  // decision below, so a sensor change can still flip the pump mid-window.
+  if (g_manualCmd != 0 && (millis() - g_manualSinceMs >= MANUAL_OVERRIDE_MS)) {
+    g_manualCmd = 0;
     Serial.println("\n  [Auto] Manual override expired — auto-irrigation back in control.");
   }
 
-  // ── Normal moisture-driven decision ───────────────────────────────────────
-  bool want = pumpShouldRun(g_soilMoisture, g_soilOk, g_rainDetected, g_pumpOn);
+  // ── Decision — sensor safety rules always outrank a manual command ────────
+  bool want = pumpShouldRun(g_soilMoisture, g_soilOk, g_rainDetected, g_pumpOn, g_manualCmd);
   if (want == g_pumpOn) return;
 
   if (want) {
-    Serial.printf("\n  [Auto] Soil %.0f%% below %d%% — starting pump.\n",
-                  g_soilMoisture, SOIL_DRY_PCT);
+    if (g_manualCmd > 0) {
+      Serial.println("\n  [Auto] Manual ON — starting pump.");
+    } else {
+      Serial.printf("\n  [Auto] Soil %.0f%% below %d%% — starting pump.\n",
+                    g_soilMoisture, SOIL_DRY_PCT);
+    }
+    g_soilAtPumpStart = g_soilMoisture;
   } else if (!g_soilOk) {
     Serial.println("\n  [Auto] Soil probe disconnected — stopping pump (fail-safe).");
   } else if (g_rainDetected) {
     Serial.println("\n  [Auto] Rain detected — stopping pump.");
-  } else {
+  } else if (g_soilMoisture >= SOIL_WET_PCT) {
     Serial.printf("\n  [Auto] Soil %.0f%% reached %d%% — stopping pump.\n",
                   g_soilMoisture, SOIL_WET_PCT);
+  } else {
+    Serial.println("\n  [Auto] Manual OFF — stopping pump.");
   }
   setPump(want);
 }
@@ -821,26 +975,31 @@ void autoIrrigate() {
 // Runs once at boot. Catches an inverted comparison or a DRY/WET swap — the
 // two mistakes here that would otherwise show up as a pump that never stops.
 void selfTestPumpLogic() {
-  struct Case { float pct; bool ok, rain, on, want; const char* what; };
+  struct Case { float pct; bool ok, rain, on; int8_t manual; bool want; const char* what; };
   static const Case cases[] = {
-    { 10, true,  false, false, true,  "dry + idle -> start"          },
-    { 10, true,  true,  false, false, "dry but raining -> stay off"  },
-    { 10, false, false, true,  false, "probe unplugged -> fail safe" },
-    { 45, true,  false, true,  true,  "in band + running -> hold on" },
-    { 45, true,  false, false, false, "in band + idle -> hold off"   },
-    { 80, true,  false, true,  false, "watered -> stop"              },
+    { 10, true,  false, false,  0, true,  "dry + idle -> start"              },
+    { 10, true,  true,  false,  0, false, "dry but raining -> stay off"      },
+    { 10, false, false, true,   0, false, "probe unplugged -> fail safe"     },
+    { 45, true,  false, true,   0, true,  "in band + running -> hold on"     },
+    { 45, true,  false, false,  0, false, "in band + idle -> hold off"       },
+    { 80, true,  false, true,   0, false, "watered -> stop"                  },
+    { 10, true,  false, false, +1, true,  "manual ON on dry soil -> start"   },
+    { 10, true,  true,  true,  +1, false, "rain beats manual ON"             },
+    { 90, true,  false, true,  +1, false, "wet soil beats manual ON"         },
+    { 10, true,  false, true,  -1, false, "manual OFF holds on dry soil"     },
+    { 10, false, false, true,  +1, false, "unplugged probe beats manual ON"  },
   };
 
   bool allOk = true;
   for (const Case& c : cases) {
-    bool got = pumpShouldRun(c.pct, c.ok, c.rain, c.on);
+    bool got = pumpShouldRun(c.pct, c.ok, c.rain, c.on, c.manual);
     if (got != c.want) {
       Serial.printf("  [SELFTEST] FAIL: %s (got %d, want %d)\n", c.what, got, c.want);
       allOk = false;
     }
   }
   Serial.printf("  [SELFTEST] Pump logic: %s\n",
-                allOk ? "all 6 cases pass" : "*** FAILED — do not connect the pump ***");
+                allOk ? "all 11 cases pass" : "*** FAILED — do not connect the pump ***");
 }
 #endif
 
@@ -857,11 +1016,11 @@ void setPump(bool on) {
   g_pumpOn = on;
   if (on) g_pumpStartedMs = millis();   // starts the max-runtime clock
 
-  // Active-LOW relay: LOW = ON (pump running), HIGH = OFF (pump idle)
-  digitalWrite(RELAY_PUMP_PIN, on ? LOW : HIGH);
+  // Polarity comes from RELAY_ACTIVE_LOW (see Pin Assignments).
+  digitalWrite(RELAY_PUMP_PIN, on ? RELAY_ON_LEVEL : RELAY_OFF_LEVEL);
 
   Serial.println();
   Serial.printf("  [Relay] GPIO 16 → %s → Pump %s\n",
-                on ? "LOW  (relay energised)" : "HIGH (relay released)",
+                on ? "ON-level  (relay energised)" : "OFF-level (relay released)",
                 on ? "** ON **" : "OFF");
 }

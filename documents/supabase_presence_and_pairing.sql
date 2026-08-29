@@ -255,3 +255,61 @@ GRANT EXECUTE ON FUNCTION device_pair_status(TEXT, TEXT) TO anon;
 -- Step 6. From this point on, `claim_device()` is the only way into `devices`.
 -- ============================================================================
 DROP POLICY IF EXISTS "Backend inserts devices" ON devices;
+
+
+-- ============================================================================
+-- Fix: the ESP32 can never read its own pump commands.
+--
+-- Supabase_Complete_Setup.md Step 5 created:
+--   CREATE POLICY "Users see own commands" ON device_commands FOR SELECT
+--   USING (device_id IN (SELECT device_id FROM devices WHERE user_id = auth.uid()));
+--
+-- The ESP32 polls with the ANON key and no logged-in user session, so
+-- auth.uid() evaluates to NULL for it and that policy returns zero rows.
+-- Every PUMP_ON/PUMP_OFF/force-stop command ever queued has been invisible
+-- to the board — the poll always came back "[]", so the pump only ever moved
+-- by its own auto-irrigation logic, never by a website/app click.
+--
+-- A blanket `FOR SELECT USING (true)` policy would "fix" this but is wrong:
+-- a Postgres RLS policy with no `TO <role>` clause applies to EVERY role, so
+-- it would OR itself onto the authenticated "Users see own commands" policy
+-- too — any logged-in user would suddenly see every user's commands, not
+-- just their own. And even scoped `TO anon`, a SELECT with no per-row check
+-- lets anyone holding the public anon key (it ships inside this firmware,
+-- web_dashboard/app.js, and the mobile app bundle — it is not a secret) list
+-- every device_id and its queued commands with no filter required, unlike
+-- the `USING (true)` heartbeat policies above, which only ever let a caller
+-- affect one row it already names.
+--
+-- Fix: reuse the exact proof-of-possession check device_pair_status() above
+-- already uses. The ESP32 has to supply BOTH its device_id and the matching
+-- pairing_secret — knowledge only the real hardware has — before it gets
+-- back so much as one row.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION device_pending_commands(p_device_id TEXT, p_secret TEXT)
+RETURNS TABLE(id BIGINT, command TEXT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM device_registry
+    WHERE device_id = p_device_id AND pairing_secret = p_secret
+  ) THEN
+    RETURN;  -- unknown device_id / wrong secret -> no rows, not an error
+  END IF;
+
+  RETURN QUERY
+  SELECT dc.id, dc.command
+  FROM device_commands dc
+  WHERE dc.device_id = p_device_id AND dc.executed = FALSE
+  ORDER BY dc.created_at ASC
+  LIMIT 1;
+END;
+$$;
+
+-- Same reasoning as device_pair_status(): the ESP32 calls this with only the
+-- anon key, so anon needs execute rights, but it can't get a result without
+-- knowing device_id AND pairing_secret together.
+GRANT EXECUTE ON FUNCTION device_pending_commands(TEXT, TEXT) TO anon;

@@ -4,11 +4,6 @@ Every dataset the plant-disease pipeline is configured to use. Source of truth i
 `ml/configs/sources.yaml` (acquisition) and `ml/configs/paths.yaml` (which ones are
 actually wired into training vs evaluation).
 
-> **Status note.** These are the datasets the pipeline is *configured* for. The
-> two-stage model has not been trained to completion yet, so the deployed Plant Scan
-> currently runs on Gemini vision instead — see "Current model status" at the bottom.
-> Nothing in this file is a claimed result.
-
 ---
 
 ## Training datasets
@@ -16,12 +11,13 @@ actually wired into training vs evaluation).
 Set in `paths.yaml → training_datasets`.
 
 ### 1. PlantVillage
-| | |
-|---|---|
-| Source | Kaggle — `mohitsingh1804/plantvillage` |
-| Size | ~800 MB |
+
+|            |                                                   |
+| ---------- | ------------------------------------------------- |
+| Source     | Kaggle — `mohitsingh1804/plantvillage`            |
+| Size       | ~800 MB                                           |
 | Conditions | Lab (controlled background, single detached leaf) |
-| Layout | Folder-per-class, `Species___Condition` |
+| Layout     | Folder-per-class, `Species___Condition`           |
 
 The standard academic benchmark for leaf disease classification. Clean and well
 labelled, but every image is a detached leaf on a plain background — models trained on
@@ -29,12 +25,13 @@ it alone score in the high 90s on their own validation split and then fall over 
 field photos. That gap is the reason for the next three datasets.
 
 ### 2. PlantWild
-| | |
-|---|---|
-| Source | Hugging Face — `uqtwei2/PlantWild` |
-| Size | ~4.4 GB, **30,030 images**, 146 classes (v1: 18,542 / 89 · v2: 11,488 / 115) |
-| Conditions | In the wild, crowdsourced |
-| License | CC BY-NC-ND 4.0 (non-commercial, no derivatives) |
+
+|            |                                                                              |
+| ---------- | ---------------------------------------------------------------------------- |
+| Source     | Hugging Face — `uqtwei2/PlantWild`                                           |
+| Size       | ~4.4 GB, **30,030 images**, 146 classes (v1: 18,542 / 89 · v2: 11,488 / 115) |
+| Conditions | In the wild, crowdsourced                                                    |
+| License    | CC BY-NC-ND 4.0 (non-commercial, no derivatives)                             |
 
 Chosen specifically to attack the PlantVillage generalisation gap with real-world
 imagery rather than just more lab data.
@@ -46,25 +43,27 @@ rejects near-duplicates (`reason: plantdoc_overlap`). Without this the real-worl
 evaluation number would be contaminated by train/test overlap and therefore meaningless.
 
 ### 3. Cassava Leaf Disease
-| | |
-|---|---|
-| Source | Kaggle — `nirmalsankalana/cassava-leaf-disease-classification` |
-| Size | ~5.8 GB, **21,367 images** |
-| Classes | Bacterial Blight, Brown Streak, Green Mottle, Mosaic Disease, healthy |
-| Conditions | Real field photos |
+
+|            |                                                                       |
+| ---------- | --------------------------------------------------------------------- |
+| Source     | Kaggle — `nirmalsankalana/cassava-leaf-disease-classification`        |
+| Size       | ~5.8 GB, **21,367 images**                                            |
+| Classes    | Bacterial Blight, Brown Streak, Green Mottle, Mosaic Disease, healthy |
+| Conditions | Real field photos                                                     |
 
 Crowdsourced from Ugandan farmers, annotated by NaCRRI and the Makerere University AI
 lab. Adds a staple crop under genuine field conditions.
 
-*Mirror choice matters here:* `gauravduttakiit`'s mirror is the raw competition format
+_Mirror choice matters here:_ `gauravduttakiit`'s mirror is the raw competition format
 (flat `train_images/` + a CSV label file), which this pipeline's folder-per-class
 scanner cannot read. `nirmalsankalana`'s mirror is pre-organised into class folders.
 
 ### 4. Rice Leaf Disease
-| | |
-|---|---|
-| Source | Kaggle — `nirmalsankalana/rice-leaf-disease-image` |
-| Size | ~500 MB, **5,932 images** |
+
+|         |                                                                         |
+| ------- | ----------------------------------------------------------------------- |
+| Source  | Kaggle — `nirmalsankalana/rice-leaf-disease-image`                      |
+| Size    | ~500 MB, **5,932 images**                                               |
 | Classes | Bacterial Blight (1584), Blast (1440), Brown Spot (1600), Tungro (1308) |
 
 Rice has **no PlantVillage coverage at all**, so this is the cheapest way to add a major
@@ -80,11 +79,12 @@ elsewhere.
 Set in `paths.yaml → eval_datasets`.
 
 ### PlantDoc
-| | |
-|---|---|
+
+|        |                                                          |
+| ------ | -------------------------------------------------------- |
 | Source | GitHub — `pratikkayal/PlantDoc-Object-Detection-Dataset` |
-| Size | ~1.7 GB |
-| Format | Images + Pascal VOC XML bounding boxes |
+| Size   | ~1.7 GB                                                  |
+| Format | Images + Pascal VOC XML bounding boxes                   |
 
 Held out entirely from training. This is the honest real-world number: models that score
 in the high 90s on PlantVillage validation have historically scored 40–70% on PlantDoc.

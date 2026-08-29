@@ -17,13 +17,20 @@ The ESP32 writes **directly to Supabase**; clients subscribe via Supabase Realti
 telemetry and manual pump control keep working even with the backend stopped.
 
 ### 💧 Automated irrigation
-A decision engine in the backend ticks every 10 s and runs the pump on either soil
-moisture thresholds or a timer schedule. It is rain-aware (skips watering when the rain
-sensor trips) and has a max-runtime cutoff.
+Decided in two places. **The board decides for itself** every 10 s, so watering keeps
+working with Wi-Fi, Supabase or the backend all down — dry soil and no rain starts the
+pump, wet soil or rain stops it. A backend decision engine additionally offers timer
+schedules and its own moisture thresholds, queued as commands.
 
-A safety gate comes first: failed sensors report `0` rather than skipping a tick, so
-without the gate a disconnected probe reading `0` would satisfy `soil < threshold`
-forever and run the pump continuously.
+Sensor rules always outrank a manual command: rain, wet soil, or a disconnected probe
+force the pump off even against a PUMP_ON from the dashboard, and a force-stop holds.
+Two hard limits apply regardless — a 15 min max-runtime cutoff and a 30 min cooldown
+after it, so a mis-calibrated probe can't cycle the pump forever.
+
+A safety gate comes first: a failed soil probe reports `0` rather than skipping a tick,
+so without the gate a disconnected probe reading `0` would satisfy `soil < threshold`
+forever and run the pump continuously. The pump logic is asserted at boot against 11
+cases with no hardware attached.
 
 ### 🍃 Plant disease detection
 Photograph a leaf, get back species, condition, severity, affected area %, symptoms,
